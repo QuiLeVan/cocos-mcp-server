@@ -517,7 +517,7 @@ export class ProjectTools implements ToolExecutor {
 
     private async getProjectSettings(category: string = 'general'): Promise<ToolResponse> {
         return new Promise((resolve) => {
-            // 使用正确的 project API 查询项目配置
+            // project API
             const configMap: Record<string, string> = {
                 general: 'project',
                 physics: 'physics',
@@ -544,7 +544,7 @@ export class ProjectTools implements ToolExecutor {
 
     private async refreshAssets(folder?: string): Promise<ToolResponse> {
         return new Promise((resolve) => {
-            // 使用正确的 asset-db API 刷新资源
+            // asset-db API
             const targetPath = folder || 'db://assets';
             
             Editor.Message.request('asset-db', 'refresh-asset', targetPath).then(() => {
@@ -618,7 +618,7 @@ export class ProjectTools implements ToolExecutor {
         return new Promise((resolve) => {
             let pattern = `${folder}/**/*`;
             
-            // 添加类型过滤
+            // Restrict glob by file extension when caller filters by asset kind
             if (type !== 'all') {
                 const typeExtensions: Record<string, string> = {
                     'scene': '.scene',
@@ -665,7 +665,7 @@ export class ProjectTools implements ToolExecutor {
 
     private async getBuildSettings(): Promise<ToolResponse> {
         return new Promise((resolve) => {
-            // 检查构建器是否准备就绪
+            // Probe whether the headless builder worker is available before advertising build actions
             Editor.Message.request('builder', 'query-worker-ready').then((ready: boolean) => {
                 resolve({
                     success: true,

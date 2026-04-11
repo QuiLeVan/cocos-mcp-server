@@ -93,7 +93,7 @@ export class BroadcastTools implements ToolExecutor {
     }
 
     private setupBroadcastListeners(): void {
-        // 设置预定义的重要广播消息监听
+        // Editor events we always track so logs reflect scene/asset lifecycle
         const importantMessages = [
             'build-worker:ready',
             'build-worker:closed',
@@ -121,7 +121,7 @@ export class BroadcastTools implements ToolExecutor {
                 timestamp: Date.now()
             });
 
-            // 保持日志大小在合理范围内
+            // Keep memory bounded while still retaining recent history
             if (this.messageLog.length > 1000) {
                 this.messageLog = this.messageLog.slice(-500);
             }
@@ -134,7 +134,7 @@ export class BroadcastTools implements ToolExecutor {
         }
         this.listeners.get(messageType)!.push(listener);
 
-        // 注册 Editor 消息监听 - 暂时注释掉，Editor.Message API可能不支持
+        // Editor - ，Editor.Message API
         // Editor.Message.on(messageType, listener);
         console.log(`[BroadcastTools] Added listener for ${messageType} (simulated)`);
     }

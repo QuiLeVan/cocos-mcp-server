@@ -311,7 +311,7 @@ export class NodeTools implements ToolExecutor {
             try {
                 let targetParentUuid = args.parentUuid;
                 
-                // 如果没有提供父节点UUID，获取场景根节点
+                // If parent omitted, resolve the scene root UUID from the editor scene graph
                 if (!targetParentUuid) {
                     try {
                         const sceneInfo = await Editor.Message.request('scene', 'query-node-tree');
@@ -332,7 +332,7 @@ export class NodeTools implements ToolExecutor {
                     }
                 }
 
-                // 如果提供了assetPath，先解析为assetUuid
+                // When only a db path is provided, look up its UUID from asset-db
                 let finalAssetUuid = args.assetUuid;
                 if (args.assetPath && !finalAssetUuid) {
                     try {
@@ -356,17 +356,17 @@ export class NodeTools implements ToolExecutor {
                     }
                 }
 
-                // 构建create-node选项
+                // create-node
                 const createNodeOptions: any = {
                     name: args.name
                 };
 
-                // 设置父节点
+                // Optional parent UUID for the new node
                 if (targetParentUuid) {
                     createNodeOptions.parent = targetParentUuid;
                 }
 
-                // 从资源实例化
+                // Instantiate from prefab/asset when asset UUID is known
                 if (finalAssetUuid) {
                     createNodeOptions.assetUuid = finalAssetUuid;
                     if (args.unlinkPrefab) {
@@ -374,31 +374,31 @@ export class NodeTools implements ToolExecutor {
                     }
                 }
 
-                // 添加组件
+                // Prefer explicit component list; otherwise infer primitive from nodeType
                 if (args.components && args.components.length > 0) {
                     createNodeOptions.components = args.components;
                 } else if (args.nodeType && args.nodeType !== 'Node' && !finalAssetUuid) {
-                    // 只有在不从资源实例化时才添加nodeType组件
+                    // nodeType
                     createNodeOptions.components = [args.nodeType];
                 }
 
-                // 保持世界变换
+                // Preserve world-space transform when reparenting later
                 if (args.keepWorldTransform) {
                     createNodeOptions.keepWorldTransform = true;
                 }
 
-                // 不使用dump参数处理初始变换，创建后使用set_node_transform设置
+                // Remaining layout (transform dump, etc.) is applied after creation via dedicated APIs
 
                 console.log('Creating node with options:', createNodeOptions);
 
-                // 创建节点
+                // Ask the scene service to materialize the node with the assembled options
                 const nodeUuid = await Editor.Message.request('scene', 'create-node', createNodeOptions);
                 const uuid = Array.isArray(nodeUuid) ? nodeUuid[0] : nodeUuid;
 
-                // 处理兄弟索引
+                // Defer reparent so the engine finishes registering the new UUID
                 if (args.siblingIndex !== undefined && args.siblingIndex >= 0 && uuid && targetParentUuid) {
                     try {
-                        await new Promise(resolve => setTimeout(resolve, 100)); // 等待内部状态更新
+                        await new Promise(resolve => setTimeout(resolve, 100)); // Yield one tick for scene graph consistency
                         await Editor.Message.request('scene', 'set-parent', {
                             parent: targetParentUuid,
                             uuids: [uuid],
@@ -409,10 +409,10 @@ export class NodeTools implements ToolExecutor {
                     }
                 }
 
-                // 添加组件（如果提供的话）
+                // create-node only wires primitives; add richer components afterwards through ComponentTools
                 if (args.components && args.components.length > 0 && uuid) {
                     try {
-                        await new Promise(resolve => setTimeout(resolve, 100)); // 等待节点创建完成
+                        await new Promise(resolve => setTimeout(resolve, 100)); // Brief pause before attaching components
                         for (const componentType of args.components) {
                             try {
                                 const result = await this.componentTools.execute('add_component', {
@@ -433,10 +433,10 @@ export class NodeTools implements ToolExecutor {
                     }
                 }
 
-                // 设置初始变换（如果提供的话）
+                // Apply caller-provided transform once the node exists
                 if (args.initialTransform && uuid) {
                     try {
-                        await new Promise(resolve => setTimeout(resolve, 150)); // 等待节点和组件创建完成
+                        await new Promise(resolve => setTimeout(resolve, 150)); // Slightly longer delay before transform writes
                         await this.setNodeTransform({
                             uuid: uuid,
                             position: args.initialTransform.position,
@@ -449,7 +449,7 @@ export class NodeTools implements ToolExecutor {
                     }
                 }
 
-                // 获取创建后的节点信息进行验证
+                // Optional snapshot of the created node for clients that want immediate verification
                 let verificationData: any = null;
                 try {
                     const nodeInfo = await this.getNodeInfo(uuid);
@@ -508,7 +508,7 @@ export class NodeTools implements ToolExecutor {
                     return;
                 }
                 
-                // 根据实际返回的数据结构解析节点信息
+                // Normalize editor dump format into our NodeInfo contract
                 const info: NodeInfo = {
                     uuid: nodeData.uuid?.value || uuid,
                     name: nodeData.name?.value || 'Unknown',
@@ -567,7 +567,7 @@ export class NodeTools implements ToolExecutor {
                 
                 resolve({ success: true, data: nodes });
             }).catch((err: Error) => {
-                // 备用方案：使用场景脚本
+                // Fallback: use scene script
                 const options = {
                     name: 'cocos-mcp-server',
                     method: 'findNodes',
@@ -585,7 +585,7 @@ export class NodeTools implements ToolExecutor {
 
     private async findNodeByName(name: string): Promise<ToolResponse> {
         return new Promise((resolve) => {
-            // 优先尝试使用 Editor API 查询节点树并搜索
+            // Editor API
             Editor.Message.request('scene', 'query-node-tree').then((tree: any) => {
                 const foundNode = this.searchNodeInTree(tree, name);
                 if (foundNode) {
@@ -601,7 +601,7 @@ export class NodeTools implements ToolExecutor {
                     resolve({ success: false, error: `Node '${name}' not found` });
                 }
             }).catch((err: Error) => {
-                // 备用方案：使用场景脚本
+                // Fallback: use scene script
                 const options = {
                     name: 'cocos-mcp-server',
                     method: 'findNodeByName',
@@ -636,7 +636,7 @@ export class NodeTools implements ToolExecutor {
 
     private async getAllNodes(): Promise<ToolResponse> {
         return new Promise((resolve) => {
-            // 尝试查询场景节点树
+            // Walk the entire scene tree returned by the editor
             Editor.Message.request('scene', 'query-node-tree').then((tree: any) => {
                 const nodes: any[] = [];
                 
@@ -668,7 +668,7 @@ export class NodeTools implements ToolExecutor {
                     }
                 });
             }).catch((err: Error) => {
-                // 备用方案：使用场景脚本
+                // Fallback: use scene script
                 const options = {
                     name: 'cocos-mcp-server',
                     method: 'getAllNodes',
@@ -696,7 +696,7 @@ export class NodeTools implements ToolExecutor {
 
     private async setNodeProperty(uuid: string, property: string, value: any): Promise<ToolResponse> {
         return new Promise((resolve) => {
-            // 尝试直接使用 Editor API 设置节点属性
+            // Editor API
             Editor.Message.request('scene', 'set-property', {
                 uuid: uuid,
                 path: property,
@@ -730,7 +730,7 @@ export class NodeTools implements ToolExecutor {
                     });
                 });
             }).catch((err: Error) => {
-                // 如果直接设置失败，尝试使用场景脚本
+                // ，
                 const options = {
                     name: 'cocos-mcp-server',
                     method: 'setNodeProperty',
