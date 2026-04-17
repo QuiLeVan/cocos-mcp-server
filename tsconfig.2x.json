@@ -3,7 +3,7 @@
     "compilerOptions": {
         "outDir": "./dist-2x",
         "typeRoots": [
-            "./@types",
+            "./@types/cocos-creator-2x",
             "./node_modules/@types"
         ],
         "types": [
