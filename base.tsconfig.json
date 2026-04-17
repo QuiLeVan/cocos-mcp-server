@@ -12,11 +12,6 @@
         "experimentalDecorators": true,
         "forceConsistentCasingInFileNames": true,
         "resolveJsonModule": true,
-        "outDir": "./dist",
-        "rootDir": "./source",
-        "types": [
-            "node",
-            "@cocos/creator-types/editor",
-        ]
+        "rootDir": "./source"
     }
 }

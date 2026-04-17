@@ -1,0 +1,26 @@
+{
+    "extends": "./base.tsconfig.json",
+    "compilerOptions": {
+        "outDir": "./dist-2x",
+        "typeRoots": [
+            "./@types",
+            "./node_modules/@types"
+        ],
+        "types": [
+            "node",
+            "cocos-creator-2x"
+        ]
+    },
+    "include": [
+        "source/**/*.ts"
+    ],
+    "exclude": [
+        "source/main.ts",
+        "source/scene.ts",
+        "source/adapters/editor-adapter-3x.ts",
+        "source/panels/default/**",
+        "source/panels/tool-manager/**",
+        "source/test/**",
+        "node_modules"
+    ]
+}

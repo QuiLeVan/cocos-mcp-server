@@ -1,0 +1,61 @@
+{
+    "name": "cocos-mcp-server",
+    "version": "1.5.0",
+    "author": "LiDaxian",
+    "description": "MCP server for Cocos Creator (2.4.13 build)",
+    "main": "dist-2x/main.2x.js",
+    "scene-script": "dist-2x/scene.2x.js",
+    "scripts": {
+        "preinstall": "node ./scripts/preinstall.js",
+        "build": "npm run build:3x",
+        "build:3x": "tsc -p tsconfig.3x.json",
+        "build:2x": "tsc -p tsconfig.2x.json",
+        "build:all": "npm run build:3x && npm run build:2x",
+        "watch": "tsc -p tsconfig.3x.json --watch",
+        "watch:3x": "tsc -p tsconfig.3x.json --watch",
+        "watch:2x": "tsc -p tsconfig.2x.json --watch",
+        "use:2x": "node scripts/install-manifest.js 2x",
+        "use:3x": "node scripts/install-manifest.js 3x"
+    },
+    "dependencies": {
+        "fs-extra": "^11.3.0",
+        "uuid": "^9.0.1"
+    },
+    "devDependencies": {
+        "@types/fs-extra": "^9.0.5",
+        "@types/node": "^18.17.1",
+        "@types/uuid": "^9.0.8",
+        "typescript": "^5.8.2"
+    },
+    "panel": {
+        "main": "dist-2x/panels/2x/index.js",
+        "title": "Cocos MCP Server",
+        "type": "dockable",
+        "width": 600,
+        "height": 500,
+        "min-width": 400,
+        "min-height": 300,
+        "messages": [
+            "start-server",
+            "stop-server",
+            "get-server-status",
+            "update-settings",
+            "getToolsList",
+            "getToolManagerState",
+            "createToolConfiguration",
+            "updateToolConfiguration",
+            "deleteToolConfiguration",
+            "setCurrentToolConfiguration",
+            "updateToolStatus",
+            "updateToolStatusBatch",
+            "exportToolConfiguration",
+            "importToolConfiguration",
+            "getEnabledTools"
+        ]
+    },
+    "main-menu": {
+        "i18n:MAIN_MENU.package.title/Cocos MCP Server": {
+            "message": "open-panel"
+        }
+    }
+}

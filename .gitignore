@@ -1,2 +1,4 @@
 node_modules/
 dist/
+dist-3x/
+dist-2x/

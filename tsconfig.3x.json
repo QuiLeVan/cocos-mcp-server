@@ -1,0 +1,22 @@
+{
+    "extends": "./base.tsconfig.json",
+    "compilerOptions": {
+        "outDir": "./dist-3x",
+        "types": [
+            "node",
+            "@cocos/creator-types/editor"
+        ]
+    },
+    "include": [
+        "source/**/*.ts"
+    ],
+    "exclude": [
+        "source/main.2x.ts",
+        "source/scene.2x.ts",
+        "source/adapters/editor-adapter-2x.ts",
+        "source/adapters/prefab-format-2x.ts",
+        "source/panels/2x/**",
+        "source/test/**",
+        "node_modules"
+    ]
+}
