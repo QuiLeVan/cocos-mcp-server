@@ -1,6 +1,9 @@
 import { ToolDefinition, ToolResponse, ToolExecutor } from '../types';
+import { IEditorAdapter } from '../adapters/editor-adapter';
 
 export class AssetAdvancedTools implements ToolExecutor {
+    constructor(private readonly adapter: IEditorAdapter) {}
+
     getTools(): ToolDefinition[] {
         return [
             {
@@ -246,7 +249,7 @@ export class AssetAdvancedTools implements ToolExecutor {
 
     private async saveAssetMeta(urlOrUUID: string, content: string): Promise<ToolResponse> {
         return new Promise((resolve) => {
-            Editor.Message.request('asset-db', 'save-asset-meta', urlOrUUID, content).then((result: any) => {
+            this.adapter.sendRequest('asset-db', 'save-asset-meta', urlOrUUID, content).then((result: any) => {
                 resolve({
                     success: true,
                     data: {
@@ -263,7 +266,7 @@ export class AssetAdvancedTools implements ToolExecutor {
 
     private async generateAvailableUrl(url: string): Promise<ToolResponse> {
         return new Promise((resolve) => {
-            Editor.Message.request('asset-db', 'generate-available-url', url).then((availableUrl: string) => {
+            this.adapter.sendRequest('asset-db', 'generate-available-url', url).then((availableUrl: string) => {
                 resolve({
                     success: true,
                     data: {
@@ -282,7 +285,7 @@ export class AssetAdvancedTools implements ToolExecutor {
 
     private async queryAssetDbReady(): Promise<ToolResponse> {
         return new Promise((resolve) => {
-            Editor.Message.request('asset-db', 'query-ready').then((ready: boolean) => {
+            this.adapter.sendRequest('asset-db', 'query-ready').then((ready: boolean) => {
                 resolve({
                     success: true,
                     data: {
@@ -298,7 +301,7 @@ export class AssetAdvancedTools implements ToolExecutor {
 
     private async openAssetExternal(urlOrUUID: string): Promise<ToolResponse> {
         return new Promise((resolve) => {
-            Editor.Message.request('asset-db', 'open-asset', urlOrUUID).then(() => {
+            this.adapter.sendRequest('asset-db', 'open-asset', urlOrUUID).then(() => {
                 resolve({
                     success: true,
                     message: 'Asset opened with external program'
@@ -335,7 +338,7 @@ export class AssetAdvancedTools implements ToolExecutor {
                         const fileName = path.basename(filePath);
                         const targetPath = `${args.targetDirectory}/${fileName}`;
                         
-                        const result = await Editor.Message.request('asset-db', 'import-asset', 
+                        const result = await this.adapter.sendRequest('asset-db', 'import-asset', 
                             filePath, targetPath, { 
                                 overwrite: args.overwrite || false,
                                 rename: !(args.overwrite || false)
@@ -406,7 +409,7 @@ export class AssetAdvancedTools implements ToolExecutor {
 
                 for (const url of urls) {
                     try {
-                        await Editor.Message.request('asset-db', 'delete-asset', url);
+                        await this.adapter.sendRequest('asset-db', 'delete-asset', url);
                         deleteResults.push({
                             url: url,
                             success: true
@@ -442,14 +445,14 @@ export class AssetAdvancedTools implements ToolExecutor {
         return new Promise(async (resolve) => {
             try {
                 // Get all assets in directory
-                const assets = await Editor.Message.request('asset-db', 'query-assets', { pattern: `${directory}/**/*` });
+                const assets = await this.adapter.sendRequest('asset-db', 'query-assets', { pattern: `${directory}/**/*` });
                 
                 const brokenReferences: any[] = [];
                 const validReferences: any[] = [];
 
                 for (const asset of assets) {
                     try {
-                        const assetInfo = await Editor.Message.request('asset-db', 'query-asset-info', asset.url);
+                        const assetInfo = await this.adapter.sendRequest('asset-db', 'query-asset-info', asset.url);
                         if (assetInfo) {
                             validReferences.push({
                                 url: asset.url,
@@ -517,7 +520,7 @@ export class AssetAdvancedTools implements ToolExecutor {
     private async exportAssetManifest(directory: string = 'db://assets', format: string = 'json', includeMetadata: boolean = true): Promise<ToolResponse> {
         return new Promise(async (resolve) => {
             try {
-                const assets = await Editor.Message.request('asset-db', 'query-assets', { pattern: `${directory}/**/*` });
+                const assets = await this.adapter.sendRequest('asset-db', 'query-assets', { pattern: `${directory}/**/*` });
                 
                 const manifest: any[] = [];
 
@@ -533,7 +536,7 @@ export class AssetAdvancedTools implements ToolExecutor {
 
                     if (includeMetadata) {
                         try {
-                            const assetInfo = await Editor.Message.request('asset-db', 'query-asset-info', asset.url);
+                            const assetInfo = await this.adapter.sendRequest('asset-db', 'query-asset-info', asset.url);
                             if (assetInfo && assetInfo.meta) {
                                 manifestEntry.meta = assetInfo.meta;
                             }

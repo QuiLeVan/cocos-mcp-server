@@ -1,6 +1,9 @@
 import { ToolDefinition, ToolResponse, ToolExecutor, SceneInfo } from '../types';
+import { IEditorAdapter } from '../adapters/editor-adapter';
 
 export class SceneTools implements ToolExecutor {
+    constructor(private readonly adapter: IEditorAdapter) {}
+
     getTools(): ToolDefinition[] {
         return [
             {
@@ -124,7 +127,7 @@ export class SceneTools implements ToolExecutor {
     private async getCurrentScene(): Promise<ToolResponse> {
         return new Promise((resolve) => {
             // query-node-tree （）
-            Editor.Message.request('scene', 'query-node-tree').then((tree: any) => {
+            this.adapter.sendRequest('scene', 'query-node-tree').then((tree: any) => {
                 if (tree && tree.uuid) {
                     resolve({
                         success: true,
@@ -147,7 +150,7 @@ export class SceneTools implements ToolExecutor {
                     args: []
                 };
                 
-                Editor.Message.request('scene', 'execute-scene-script', options).then((result: any) => {
+                this.adapter.sendRequest('scene', 'execute-scene-script', options).then((result: any) => {
                     resolve(result);
                 }).catch((err2: Error) => {
                     resolve({ success: false, error: `Direct API failed: ${err.message}, Scene script failed: ${err2.message}` });
@@ -159,7 +162,7 @@ export class SceneTools implements ToolExecutor {
     private async getSceneList(): Promise<ToolResponse> {
         return new Promise((resolve) => {
             // Note: query-assets API corrected with proper parameters
-            Editor.Message.request('asset-db', 'query-assets', {
+            this.adapter.sendRequest('asset-db', 'query-assets', {
                 pattern: 'db://assets/**/*.scene'
             }).then((results: any[]) => {
                 const scenes: SceneInfo[] = results.map(asset => ({
@@ -177,13 +180,13 @@ export class SceneTools implements ToolExecutor {
     private async openScene(scenePath: string): Promise<ToolResponse> {
         return new Promise((resolve) => {
             // UUID
-            Editor.Message.request('asset-db', 'query-uuid', scenePath).then((uuid: string | null) => {
+            this.adapter.sendRequest('asset-db', 'query-uuid', scenePath).then((uuid: string | null) => {
                 if (!uuid) {
                     throw new Error('Scene not found');
                 }
                 
                 // scene API (UUID)
-                return Editor.Message.request('scene', 'open-scene', uuid);
+                return this.adapter.sendRequest('scene', 'open-scene', uuid);
             }).then(() => {
                 resolve({ success: true, message: `Scene opened: ${scenePath}` });
             }).catch((err: Error) => {
@@ -194,7 +197,7 @@ export class SceneTools implements ToolExecutor {
 
     private async saveScene(): Promise<ToolResponse> {
         return new Promise((resolve) => {
-            Editor.Message.request('scene', 'save-scene').then(() => {
+            this.adapter.sendRequest('scene', 'save-scene').then(() => {
                 resolve({ success: true, message: 'Scene saved successfully' });
             }).catch((err: Error) => {
                 resolve({ success: false, error: err.message });
@@ -363,7 +366,7 @@ export class SceneTools implements ToolExecutor {
                 }
             ], null, 2);
             
-            Editor.Message.request('asset-db', 'create-asset', fullPath, sceneContent).then((result: any) => {
+            this.adapter.sendRequest('asset-db', 'create-asset', fullPath, sceneContent).then((result: any) => {
                 // Verify scene creation by checking if it exists
                 this.getSceneList().then((sceneList) => {
                     const createdScene = sceneList.data?.find((scene: any) => scene.uuid === result.uuid);
@@ -398,7 +401,7 @@ export class SceneTools implements ToolExecutor {
     private async getSceneHierarchy(includeComponents: boolean = false): Promise<ToolResponse> {
         return new Promise((resolve) => {
             // Editor API
-            Editor.Message.request('scene', 'query-node-tree').then((tree: any) => {
+            this.adapter.sendRequest('scene', 'query-node-tree').then((tree: any) => {
                 if (tree) {
                     const hierarchy = this.buildHierarchy(tree, includeComponents);
                     resolve({
@@ -416,7 +419,7 @@ export class SceneTools implements ToolExecutor {
                     args: [includeComponents]
                 };
                 
-                Editor.Message.request('scene', 'execute-scene-script', options).then((result: any) => {
+                this.adapter.sendRequest('scene', 'execute-scene-script', options).then((result: any) => {
                     resolve(result);
                 }).catch((err2: Error) => {
                     resolve({ success: false, error: `Direct API failed: ${err.message}, Scene script failed: ${err2.message}` });
@@ -453,7 +456,7 @@ export class SceneTools implements ToolExecutor {
     private async saveSceneAs(path: string): Promise<ToolResponse> {
         return new Promise((resolve) => {
             // save-as-scene API ，
-            (Editor.Message.request as any)('scene', 'save-as-scene').then(() => {
+            this.adapter.sendRequest('scene', 'save-as-scene').then(() => {
                 resolve({
                     success: true,
                     data: {
@@ -469,7 +472,7 @@ export class SceneTools implements ToolExecutor {
 
     private async closeScene(): Promise<ToolResponse> {
         return new Promise((resolve) => {
-            Editor.Message.request('scene', 'close-scene').then(() => {
+            this.adapter.sendRequest('scene', 'close-scene').then(() => {
                 resolve({
                     success: true,
                     message: 'Scene closed successfully'

@@ -2,12 +2,13 @@ import { v4 as uuidv4 } from 'uuid';
 import { ToolConfig, ToolConfiguration, ToolManagerSettings, ToolDefinition } from '../types';
 import * as fs from 'fs';
 import * as path from 'path';
+import { IEditorAdapter } from '../adapters/editor-adapter';
 
 export class ToolManager {
     private settings: ToolManagerSettings;
     private availableTools: ToolConfig[] = [];
 
-    constructor() {
+    constructor(private readonly adapter: IEditorAdapter) {
         this.settings = this.readToolManagerSettings();
         this.initializeAvailableTools();
         
@@ -19,7 +20,7 @@ export class ToolManager {
     }
 
     private getToolManagerSettingsPath(): string {
-        return path.join(Editor.Project.path, 'settings', 'tool-manager.json');
+        return path.join(this.adapter.projectPath, 'settings', 'tool-manager.json');
     }
 
     private ensureSettingsDir(): void {
@@ -97,22 +98,23 @@ export class ToolManager {
             const { AssetAdvancedTools } = require('./asset-advanced-tools');
             const { ValidationTools } = require('./validation-tools');
 
+            const a = this.adapter;
             // Instantiate tool classes
             const tools = {
-                scene: new SceneTools(),
-                node: new NodeTools(),
-                component: new ComponentTools(),
-                prefab: new PrefabTools(),
-                project: new ProjectTools(),
-                debug: new DebugTools(),
-                preferences: new PreferencesTools(),
-                server: new ServerTools(),
-                broadcast: new BroadcastTools(),
-                sceneAdvanced: new SceneAdvancedTools(),
-                sceneView: new SceneViewTools(),
-                referenceImage: new ReferenceImageTools(),
-                assetAdvanced: new AssetAdvancedTools(),
-                validation: new ValidationTools()
+                scene: new SceneTools(a),
+                node: new NodeTools(a),
+                component: new ComponentTools(a),
+                prefab: new PrefabTools(a),
+                project: new ProjectTools(a),
+                debug: new DebugTools(a),
+                preferences: new PreferencesTools(a),
+                server: new ServerTools(a),
+                broadcast: new BroadcastTools(a),
+                sceneAdvanced: new SceneAdvancedTools(a),
+                sceneView: new SceneViewTools(a),
+                referenceImage: new ReferenceImageTools(a),
+                assetAdvanced: new AssetAdvancedTools(a),
+                validation: new ValidationTools(a)
             };
 
             // Collect ToolDefinitions from each class

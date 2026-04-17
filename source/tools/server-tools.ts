@@ -1,6 +1,9 @@
 import { ToolDefinition, ToolResponse, ToolExecutor } from '../types';
+import { IEditorAdapter } from '../adapters/editor-adapter';
 
 export class ServerTools implements ToolExecutor {
+    constructor(private readonly adapter: IEditorAdapter) {}
+
     getTools(): ToolDefinition[] {
         return [
             {
@@ -81,7 +84,7 @@ export class ServerTools implements ToolExecutor {
 
     private async queryServerIPList(): Promise<ToolResponse> {
         return new Promise((resolve) => {
-            Editor.Message.request('server', 'query-ip-list').then((ipList: string[]) => {
+            this.adapter.sendRequest('server', 'query-ip-list').then((ipList: string[]) => {
                 resolve({
                     success: true,
                     data: {
@@ -98,7 +101,7 @@ export class ServerTools implements ToolExecutor {
 
     private async querySortedServerIPList(): Promise<ToolResponse> {
         return new Promise((resolve) => {
-            Editor.Message.request('server', 'query-sort-ip-list').then((sortedIPList: string[]) => {
+            this.adapter.sendRequest('server', 'query-sort-ip-list').then((sortedIPList: string[]) => {
                 resolve({
                     success: true,
                     data: {
@@ -115,7 +118,7 @@ export class ServerTools implements ToolExecutor {
 
     private async queryServerPort(): Promise<ToolResponse> {
         return new Promise((resolve) => {
-            Editor.Message.request('server', 'query-port').then((port: number) => {
+            this.adapter.sendRequest('server', 'query-port').then((port: number) => {
                 resolve({
                     success: true,
                     data: {
@@ -185,7 +188,7 @@ export class ServerTools implements ToolExecutor {
             
             try {
                 // Test basic Editor API connectivity
-                const testPromise = Editor.Message.request('server', 'query-port');
+                const testPromise = this.adapter.sendRequest('server', 'query-port');
                 const timeoutPromise = new Promise((_, reject) => {
                     setTimeout(() => reject(new Error('Connection timeout')), timeout);
                 });

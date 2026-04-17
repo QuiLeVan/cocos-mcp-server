@@ -1,11 +1,12 @@
 import { PrefabTools } from '../tools/prefab-tools';
+import { EditorAdapter3x } from '../adapters/editor-adapter-3x';
 
 /** Manual / dev tests for PrefabTools */
 export class PrefabToolsTest {
     private prefabTools: PrefabTools;
 
     constructor() {
-        this.prefabTools = new PrefabTools();
+        this.prefabTools = new PrefabTools(new EditorAdapter3x());
     }
 
     async runAllTests() {

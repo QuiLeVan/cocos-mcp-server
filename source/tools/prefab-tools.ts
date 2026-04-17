@@ -1,6 +1,9 @@
 import { ToolDefinition, ToolResponse, ToolExecutor, PrefabInfo } from '../types';
+import { IEditorAdapter } from '../adapters/editor-adapter';
 
 export class PrefabTools implements ToolExecutor {
+    constructor(private readonly adapter: IEditorAdapter) {}
+
     getTools(): ToolDefinition[] {
         return [
             {
@@ -215,7 +218,7 @@ export class PrefabTools implements ToolExecutor {
             const pattern = folder.endsWith('/') ? 
                 `${folder}**/*.prefab` : `${folder}/**/*.prefab`;
             
-            Editor.Message.request('asset-db', 'query-assets', {
+            this.adapter.sendRequest('asset-db', 'query-assets', {
                 pattern: pattern
             }).then((results: any[]) => {
                 const prefabs: PrefabInfo[] = results.map(asset => ({
@@ -233,12 +236,12 @@ export class PrefabTools implements ToolExecutor {
 
     private async loadPrefab(prefabPath: string): Promise<ToolResponse> {
         return new Promise((resolve) => {
-            Editor.Message.request('asset-db', 'query-asset-info', prefabPath).then((assetInfo: any) => {
+            this.adapter.sendRequest('asset-db', 'query-asset-info', prefabPath).then((assetInfo: any) => {
                 if (!assetInfo) {
                     throw new Error('Prefab not found');
                 }
                 
-                return Editor.Message.request('scene', 'load-asset', {
+                return this.adapter.sendRequest('scene', 'load-asset', {
                     uuid: assetInfo.uuid
                 });
             }).then((prefabData: any) => {
@@ -260,7 +263,7 @@ export class PrefabTools implements ToolExecutor {
         return new Promise(async (resolve) => {
             try {
                 // Get prefab asset information
-                const assetInfo = await Editor.Message.request('asset-db', 'query-asset-info', args.prefabPath);
+                const assetInfo = await this.adapter.sendRequest('asset-db', 'query-asset-info', args.prefabPath);
                 if (!assetInfo) {
                     throw new Error('Prefab not found');
                 }
@@ -292,7 +295,7 @@ export class PrefabTools implements ToolExecutor {
                 }
 
                 // Create node
-                const nodeUuid = await Editor.Message.request('scene', 'create-node', createNodeOptions);
+                const nodeUuid = await this.adapter.sendRequest('scene', 'create-node', createNodeOptions);
                 const uuid = Array.isArray(nodeUuid) ? nodeUuid[0] : nodeUuid;
 
                 // Note: create-node from prefab asset should establish prefab link automatically
@@ -357,9 +360,9 @@ export class PrefabTools implements ToolExecutor {
 
             // Try multiple APIs to establish prefab link
             const connectionMethods = [
-                () => Editor.Message.request('scene', 'connect-prefab-instance', prefabConnectionData),
-                () => Editor.Message.request('scene', 'set-prefab-connection', prefabConnectionData),
-                () => Editor.Message.request('scene', 'apply-prefab-link', prefabConnectionData)
+                () => this.adapter.sendRequest('scene', 'connect-prefab-instance', prefabConnectionData),
+                () => this.adapter.sendRequest('scene', 'set-prefab-connection', prefabConnectionData),
+                () => this.adapter.sendRequest('scene', 'apply-prefab-link', prefabConnectionData)
             ];
 
             let connected = false;
@@ -401,7 +404,7 @@ export class PrefabTools implements ToolExecutor {
                 }
             };
 
-            await Editor.Message.request('scene', 'set-property', {
+            await this.adapter.sendRequest('scene', 'set-property', {
                 uuid: nodeUuid,
                 path: '_prefab',
                 dump: {
@@ -426,7 +429,7 @@ export class PrefabTools implements ToolExecutor {
             // Try asset-db API to read file
             let assetContent: any;
             try {
-                assetContent = await Editor.Message.request('asset-db', 'query-asset-info', prefabPath);
+                assetContent = await this.adapter.sendRequest('asset-db', 'query-asset-info', prefabPath);
                 if (assetContent && assetContent.source) {
                     // If source path exists, read file directly
                     const fs = require('fs');
@@ -488,7 +491,7 @@ export class PrefabTools implements ToolExecutor {
 
     private async tryCreateNodeWithPrefab(args: any): Promise<ToolResponse> {
         return new Promise((resolve) => {
-            Editor.Message.request('asset-db', 'query-asset-info', args.prefabPath).then((assetInfo: any) => {
+            this.adapter.sendRequest('asset-db', 'query-asset-info', args.prefabPath).then((assetInfo: any) => {
                 if (!assetInfo) {
                     throw new Error('Prefab not found');
                 }
@@ -503,13 +506,13 @@ export class PrefabTools implements ToolExecutor {
                     createNodeOptions.parent = args.parentUuid;
                 }
 
-                return Editor.Message.request('scene', 'create-node', createNodeOptions);
+                return this.adapter.sendRequest('scene', 'create-node', createNodeOptions);
             }).then((nodeUuid: string | string[]) => {
                 const uuid = Array.isArray(nodeUuid) ? nodeUuid[0] : nodeUuid;
                 
                 // Apply position when provided
                 if (args.position && uuid) {
-                    Editor.Message.request('scene', 'set-property', {
+                    this.adapter.sendRequest('scene', 'set-property', {
                         uuid: uuid,
                         path: 'position',
                         dump: { value: args.position }
@@ -599,7 +602,7 @@ export class PrefabTools implements ToolExecutor {
 
     private async getAssetInfo(prefabPath: string): Promise<any> {
         return new Promise((resolve) => {
-            Editor.Message.request('asset-db', 'query-asset-info', prefabPath).then((assetInfo: any) => {
+            this.adapter.sendRequest('asset-db', 'query-asset-info', prefabPath).then((assetInfo: any) => {
                 resolve(assetInfo);
             }).catch(() => {
                 resolve(null);
@@ -625,7 +628,7 @@ export class PrefabTools implements ToolExecutor {
                 };
             }
 
-            Editor.Message.request('scene', 'create-node', createNodeOptions).then((nodeUuid: string | string[]) => {
+            this.adapter.sendRequest('scene', 'create-node', createNodeOptions).then((nodeUuid: string | string[]) => {
                 const uuid = Array.isArray(nodeUuid) ? nodeUuid[0] : nodeUuid;
                 resolve({
                     success: true,
@@ -644,9 +647,9 @@ export class PrefabTools implements ToolExecutor {
         return new Promise((resolve) => {
             // Try multiple ways to apply prefab data
             const methods = [
-                () => Editor.Message.request('scene', 'apply-prefab', { node: nodeUuid, prefab: prefabUuid }),
-                () => Editor.Message.request('scene', 'set-prefab', { node: nodeUuid, prefab: prefabUuid }),
-                () => Editor.Message.request('scene', 'load-prefab-to-node', { node: nodeUuid, prefab: prefabUuid })
+                () => this.adapter.sendRequest('scene', 'apply-prefab', { node: nodeUuid, prefab: prefabUuid }),
+                () => this.adapter.sendRequest('scene', 'set-prefab', { node: nodeUuid, prefab: prefabUuid }),
+                () => this.adapter.sendRequest('scene', 'load-prefab-to-node', { node: nodeUuid, prefab: prefabUuid })
             ];
 
             const tryMethod = (index: number) => {
@@ -897,7 +900,7 @@ export class PrefabTools implements ToolExecutor {
         return new Promise(async (resolve) => {
             try {
                 // Fetch basic node info first
-                const nodeInfo = await Editor.Message.request('scene', 'query-node', nodeUuid);
+                const nodeInfo = await this.adapter.sendRequest('scene', 'query-node', nodeUuid);
                 if (!nodeInfo) {
                     resolve(null);
                     return;
@@ -925,7 +928,7 @@ export class PrefabTools implements ToolExecutor {
     private async getNodeWithChildren(nodeUuid: string): Promise<any> {
         try {
             // Load full scene tree
-            const tree = await Editor.Message.request('scene', 'query-node-tree');
+            const tree = await this.adapter.sendRequest('scene', 'query-node-tree');
             if (!tree) {
                 return null;
             }
@@ -1021,7 +1024,7 @@ export class PrefabTools implements ToolExecutor {
     private async buildBasicNodeInfo(nodeUuid: string): Promise<any> {
         return new Promise((resolve) => {
             // Build minimal node record
-            Editor.Message.request('scene', 'query-node', nodeUuid).then((nodeInfo: any) => {
+            this.adapter.sendRequest('scene', 'query-node', nodeUuid).then((nodeInfo: any) => {
                 if (!nodeInfo) {
                     resolve(null);
                     return;
@@ -1304,9 +1307,9 @@ export class PrefabTools implements ToolExecutor {
         return new Promise((resolve, reject) => {
             // Multiple save strategies
             const saveMethods = [
-                () => Editor.Message.request('asset-db', 'create-asset', filePath, content),
-                () => Editor.Message.request('asset-db', 'save-asset', filePath, content),
-                () => Editor.Message.request('asset-db', 'write-asset', filePath, content)
+                () => this.adapter.sendRequest('asset-db', 'create-asset', filePath, content),
+                () => this.adapter.sendRequest('asset-db', 'save-asset', filePath, content),
+                () => this.adapter.sendRequest('asset-db', 'write-asset', filePath, content)
             ];
 
             const trySave = (index: number) => {
@@ -1328,12 +1331,12 @@ export class PrefabTools implements ToolExecutor {
 
     private async updatePrefab(prefabPath: string, nodeUuid: string): Promise<ToolResponse> {
         return new Promise((resolve) => {
-            Editor.Message.request('asset-db', 'query-asset-info', prefabPath).then((assetInfo: any) => {
+            this.adapter.sendRequest('asset-db', 'query-asset-info', prefabPath).then((assetInfo: any) => {
                 if (!assetInfo) {
                     throw new Error('Prefab not found');
                 }
 
-                return Editor.Message.request('scene', 'apply-prefab', {
+                return this.adapter.sendRequest('scene', 'apply-prefab', {
                     node: nodeUuid,
                     prefab: assetInfo.uuid
                 });
@@ -1350,7 +1353,7 @@ export class PrefabTools implements ToolExecutor {
 
     private async revertPrefab(nodeUuid: string): Promise<ToolResponse> {
         return new Promise((resolve) => {
-            Editor.Message.request('scene', 'revert-prefab', {
+            this.adapter.sendRequest('scene', 'revert-prefab', {
                 node: nodeUuid
             }).then(() => {
                 resolve({
@@ -1365,12 +1368,12 @@ export class PrefabTools implements ToolExecutor {
 
     private async getPrefabInfo(prefabPath: string): Promise<ToolResponse> {
         return new Promise((resolve) => {
-            Editor.Message.request('asset-db', 'query-asset-info', prefabPath).then((assetInfo: any) => {
+            this.adapter.sendRequest('asset-db', 'query-asset-info', prefabPath).then((assetInfo: any) => {
                 if (!assetInfo) {
                     throw new Error('Prefab not found');
                 }
 
-                return Editor.Message.request('asset-db', 'query-asset-meta', assetInfo.uuid);
+                return this.adapter.sendRequest('asset-db', 'query-asset-meta', assetInfo.uuid);
             }).then((metaInfo: any) => {
                 const info: PrefabInfo = {
                     name: metaInfo.name,
@@ -1405,7 +1408,7 @@ export class PrefabTools implements ToolExecutor {
         return new Promise((resolve) => {
             try {
                 // Read prefab JSON from disk
-                Editor.Message.request('asset-db', 'query-asset-info', prefabPath).then((assetInfo: any) => {
+                this.adapter.sendRequest('asset-db', 'query-asset-info', prefabPath).then((assetInfo: any) => {
                     if (!assetInfo) {
                         resolve({
                             success: false,
@@ -1415,7 +1418,7 @@ export class PrefabTools implements ToolExecutor {
                     }
 
                     // Validate prefab JSON
-                    Editor.Message.request('asset-db', 'read-asset', prefabPath).then((content: string) => {
+                    this.adapter.sendRequest('asset-db', 'read-asset', prefabPath).then((content: string) => {
                         try {
                             const prefabData = JSON.parse(content);
                             const validationResult = this.validatePrefabFormat(prefabData);
@@ -1553,7 +1556,7 @@ export class PrefabTools implements ToolExecutor {
 
     private async readPrefabContent(prefabPath: string): Promise<{ success: boolean; data?: any; error?: string }> {
         return new Promise((resolve) => {
-            Editor.Message.request('asset-db', 'read-asset', prefabPath).then((content: string) => {
+            this.adapter.sendRequest('asset-db', 'read-asset', prefabPath).then((content: string) => {
                 try {
                     const prefabData = JSON.parse(content);
                     resolve({ success: true, data: prefabData });
@@ -1586,7 +1589,7 @@ export class PrefabTools implements ToolExecutor {
      */
     private async createAssetWithAssetDB(assetPath: string, content: string): Promise<{ success: boolean; data?: any; error?: string }> {
         return new Promise((resolve) => {
-            Editor.Message.request('asset-db', 'create-asset', assetPath, content, {
+            this.adapter.sendRequest('asset-db', 'create-asset', assetPath, content, {
                 overwrite: true,
                 rename: false
             }).then((assetInfo: any) => {
@@ -1605,7 +1608,7 @@ export class PrefabTools implements ToolExecutor {
     private async createMetaWithAssetDB(assetPath: string, metaContent: any): Promise<{ success: boolean; data?: any; error?: string }> {
         return new Promise((resolve) => {
             const metaContentString = JSON.stringify(metaContent, null, 2);
-            Editor.Message.request('asset-db', 'save-asset-meta', assetPath, metaContentString).then((assetInfo: any) => {
+            this.adapter.sendRequest('asset-db', 'save-asset-meta', assetPath, metaContentString).then((assetInfo: any) => {
                 console.log('.meta file created:', assetInfo);
                 resolve({ success: true, data: assetInfo });
             }).catch((error: any) => {
@@ -1620,7 +1623,7 @@ export class PrefabTools implements ToolExecutor {
      */
     private async reimportAssetWithAssetDB(assetPath: string): Promise<{ success: boolean; data?: any; error?: string }> {
         return new Promise((resolve) => {
-            Editor.Message.request('asset-db', 'reimport-asset', assetPath).then((result: any) => {
+            this.adapter.sendRequest('asset-db', 'reimport-asset', assetPath).then((result: any) => {
                 console.log('Re-import succeeded:', result);
                 resolve({ success: true, data: result });
             }).catch((error: any) => {
@@ -1635,7 +1638,7 @@ export class PrefabTools implements ToolExecutor {
      */
     private async updateAssetWithAssetDB(assetPath: string, content: string): Promise<{ success: boolean; data?: any; error?: string }> {
         return new Promise((resolve) => {
-            Editor.Message.request('asset-db', 'save-asset', assetPath, content).then((result: any) => {
+            this.adapter.sendRequest('asset-db', 'save-asset', assetPath, content).then((result: any) => {
                 console.log('Asset file updated:', result);
                 resolve({ success: true, data: result });
             }).catch((error: any) => {
@@ -2358,7 +2361,7 @@ export class PrefabTools implements ToolExecutor {
     private async restorePrefabNode(nodeUuid: string, assetUuid: string): Promise<ToolResponse> {
         return new Promise((resolve) => {
             // restore-prefab official API
-            (Editor.Message.request as any)('scene', 'restore-prefab', nodeUuid, assetUuid).then(() => {
+            this.adapter.sendRequest('scene', 'restore-prefab', nodeUuid, assetUuid).then(() => {
                 resolve({
                     success: true,
                     data: {
@@ -2379,7 +2382,7 @@ export class PrefabTools implements ToolExecutor {
     // New serializer aligned with official prefab format
     private async getNodeDataForPrefab(nodeUuid: string): Promise<{ success: boolean; data?: any; error?: string }> {
         return new Promise((resolve) => {
-            Editor.Message.request('scene', 'query-node', nodeUuid).then((nodeData: any) => {
+            this.adapter.sendRequest('scene', 'query-node', nodeUuid).then((nodeData: any) => {
                 if (!nodeData) {
                     resolve({ success: false, error: 'Node does not exist' });
                     return;
@@ -2824,7 +2827,7 @@ export class PrefabTools implements ToolExecutor {
 
             // Save via asset-db
             await new Promise((resolve, reject) => {
-                Editor.Message.request('asset-db', 'create-asset', finalPrefabPath, prefabContent).then(() => {
+                this.adapter.sendRequest('asset-db', 'create-asset', finalPrefabPath, prefabContent).then(() => {
                     resolve(true);
                 }).catch((error: any) => {
                     reject(error);
@@ -2833,7 +2836,7 @@ export class PrefabTools implements ToolExecutor {
 
             // Write .meta
             await new Promise((resolve, reject) => {
-                Editor.Message.request('asset-db', 'create-asset', metaPath, metaContent).then(() => {
+                this.adapter.sendRequest('asset-db', 'create-asset', metaPath, metaContent).then(() => {
                     resolve(true);
                 }).catch((error: any) => {
                     reject(error);

@@ -16,6 +16,7 @@ import { SceneViewTools } from './tools/scene-view-tools';
 import { ReferenceImageTools } from './tools/reference-image-tools';
 import { AssetAdvancedTools } from './tools/asset-advanced-tools';
 import { ValidationTools } from './tools/validation-tools';
+import { IEditorAdapter } from './adapters/editor-adapter';
 
 export class MCPServer {
     private settings: MCPServerSettings;
@@ -25,28 +26,32 @@ export class MCPServer {
     private toolsList: ToolDefinition[] = [];
     private enabledTools: any[] = []; // Cached enabled tool descriptors
 
-    constructor(settings: MCPServerSettings) {
+    constructor(
+        settings: MCPServerSettings,
+        private readonly editorAdapter: IEditorAdapter,
+    ) {
         this.settings = settings;
         this.initializeTools();
     }
 
     private initializeTools(): void {
+        const a = this.editorAdapter;
         try {
             console.log('[MCPServer] Initializing tools...');
-            this.tools.scene = new SceneTools();
-            this.tools.node = new NodeTools();
-            this.tools.component = new ComponentTools();
-            this.tools.prefab = new PrefabTools();
-            this.tools.project = new ProjectTools();
-            this.tools.debug = new DebugTools();
-            this.tools.preferences = new PreferencesTools();
-            this.tools.server = new ServerTools();
-            this.tools.broadcast = new BroadcastTools();
-            this.tools.sceneAdvanced = new SceneAdvancedTools();
-            this.tools.sceneView = new SceneViewTools();
-            this.tools.referenceImage = new ReferenceImageTools();
-            this.tools.assetAdvanced = new AssetAdvancedTools();
-            this.tools.validation = new ValidationTools();
+            this.tools.scene = new SceneTools(a);
+            this.tools.node = new NodeTools(a);
+            this.tools.component = new ComponentTools(a);
+            this.tools.prefab = new PrefabTools(a);
+            this.tools.project = new ProjectTools(a);
+            this.tools.debug = new DebugTools(a);
+            this.tools.preferences = new PreferencesTools(a);
+            this.tools.server = new ServerTools(a);
+            this.tools.broadcast = new BroadcastTools(a);
+            this.tools.sceneAdvanced = new SceneAdvancedTools(a);
+            this.tools.sceneView = new SceneViewTools(a);
+            this.tools.referenceImage = new ReferenceImageTools(a);
+            this.tools.assetAdvanced = new AssetAdvancedTools(a);
+            this.tools.validation = new ValidationTools(a);
             console.log('[MCPServer] Tools initialized successfully');
         } catch (error) {
             console.error('[MCPServer] Error initializing tools:', error);

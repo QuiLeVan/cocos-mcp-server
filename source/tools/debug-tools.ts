@@ -1,18 +1,19 @@
 import { ToolDefinition, ToolResponse, ToolExecutor, ConsoleMessage, PerformanceStats, ValidationResult, ValidationIssue } from '../types';
 import * as fs from 'fs';
 import * as path from 'path';
+import { IEditorAdapter } from '../adapters/editor-adapter';
 
 export class DebugTools implements ToolExecutor {
     private consoleMessages: ConsoleMessage[] = [];
     private readonly maxMessages = 1000;
 
-    constructor() {
+    constructor(private readonly adapter: IEditorAdapter) {
         this.setupConsoleCapture();
     }
 
     private setupConsoleCapture(): void {
         // Intercept Editor console messages
-        // Note: Editor.Message.addBroadcastListener may not be available in all versions
+        // Note: editor broadcast listeners may not be available in all versions
         // This is a placeholder for console capture implementation
         console.log('Console capture setup - implementation depends on Editor API availability');
     }
@@ -241,8 +242,8 @@ export class DebugTools implements ToolExecutor {
         this.consoleMessages = [];
         
         try {
-            // Note: Editor.Message.send may not return a promise in all versions
-            Editor.Message.send('console', 'clear');
+            // Note: adapter.send (fire-and-forget) may not return a promise in all versions
+            this.adapter.send('console', 'clear');
             return {
                 success: true,
                 message: 'Console cleared successfully'
@@ -254,7 +255,7 @@ export class DebugTools implements ToolExecutor {
 
     private async executeScript(script: string): Promise<ToolResponse> {
         return new Promise((resolve) => {
-            Editor.Message.request('scene', 'execute-scene-script', {
+            this.adapter.sendRequest('scene', 'execute-scene-script', {
                 name: 'console',
                 method: 'eval',
                 args: [script]
@@ -280,7 +281,7 @@ export class DebugTools implements ToolExecutor {
                 }
 
                 try {
-                    const nodeData = await Editor.Message.request('scene', 'query-node', nodeUuid);
+                    const nodeData = await this.adapter.sendRequest('scene', 'query-node', nodeUuid);
                     
                     const tree = {
                         uuid: nodeData.uuid,
@@ -309,7 +310,7 @@ export class DebugTools implements ToolExecutor {
                     resolve({ success: true, data: tree });
                 });
             } else {
-                Editor.Message.request('scene', 'query-hierarchy').then(async (hierarchy: any) => {
+                this.adapter.sendRequest('scene', 'query-hierarchy').then(async (hierarchy: any) => {
                     const trees = [];
                     for (const rootNode of hierarchy.children) {
                         const tree = await buildTree(rootNode.uuid);
@@ -325,7 +326,7 @@ export class DebugTools implements ToolExecutor {
 
     private async getPerformanceStats(): Promise<ToolResponse> {
         return new Promise((resolve) => {
-            Editor.Message.request('scene', 'query-performance').then((stats: any) => {
+            this.adapter.sendRequest('scene', 'query-performance').then((stats: any) => {
                 const perfStats: PerformanceStats = {
                     nodeCount: stats.nodeCount || 0,
                     componentCount: stats.componentCount || 0,
@@ -352,7 +353,7 @@ export class DebugTools implements ToolExecutor {
         try {
             // Check for missing assets
             if (options.checkMissingAssets) {
-                const assetCheck = await Editor.Message.request('scene', 'check-missing-assets');
+                const assetCheck = await this.adapter.sendRequest('scene', 'check-missing-assets');
                 if (assetCheck && assetCheck.missing) {
                     issues.push({
                         type: 'error',
@@ -365,7 +366,7 @@ export class DebugTools implements ToolExecutor {
 
             // Check for performance issues
             if (options.checkPerformance) {
-                const hierarchy = await Editor.Message.request('scene', 'query-hierarchy');
+                const hierarchy = await this.adapter.sendRequest('scene', 'query-hierarchy');
                 const nodeCount = this.countNodes(hierarchy.children);
                 
                 if (nodeCount > 1000) {

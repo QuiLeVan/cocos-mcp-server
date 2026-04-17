@@ -1,8 +1,11 @@
 import { ToolDefinition, ToolResponse, ToolExecutor, ProjectInfo, AssetInfo } from '../types';
 import * as fs from 'fs';
 import * as path from 'path';
+import { IEditorAdapter } from '../adapters/editor-adapter';
 
 export class ProjectTools implements ToolExecutor {
+    constructor(private readonly adapter: IEditorAdapter) {}
+
     getTools(): ToolDefinition[] {
         return [
             {
@@ -455,7 +458,7 @@ export class ProjectTools implements ToolExecutor {
 
             // Note: Preview module is not documented in official API
             // Using fallback approach - open build panel as alternative
-            Editor.Message.request('builder', 'open').then(() => {
+            this.adapter.sendRequest('builder', 'open').then(() => {
                 resolve({
                     success: true,
                     message: `Build panel opened. Preview functionality requires manual setup.`
@@ -477,7 +480,7 @@ export class ProjectTools implements ToolExecutor {
 
             // Note: Builder module only supports 'open' and 'query-worker-ready'
             // Building requires manual interaction through the build panel
-            Editor.Message.request('builder', 'open').then(() => {
+            this.adapter.sendRequest('builder', 'open').then(() => {
                 resolve({
                     success: true,
                     message: `Build panel opened for ${args.platform}. Please configure and start build manually.`,
@@ -503,7 +506,7 @@ export class ProjectTools implements ToolExecutor {
             };
 
             // Note: 'query-info' API doesn't exist, using 'query-config' instead
-            Editor.Message.request('project', 'query-config', 'project').then((additionalInfo: any) => {
+            this.adapter.sendRequest('project', 'query-config', 'project').then((additionalInfo: any) => {
                 if (additionalInfo) {
                     Object.assign(info, { config: additionalInfo });
                 }
@@ -527,7 +530,7 @@ export class ProjectTools implements ToolExecutor {
 
             const configName = configMap[category] || 'project';
 
-            Editor.Message.request('project', 'query-config', configName).then((settings: any) => {
+            this.adapter.sendRequest('project', 'query-config', configName).then((settings: any) => {
                 resolve({
                     success: true,
                     data: {
@@ -547,7 +550,7 @@ export class ProjectTools implements ToolExecutor {
             // asset-db API
             const targetPath = folder || 'db://assets';
             
-            Editor.Message.request('asset-db', 'refresh-asset', targetPath).then(() => {
+            this.adapter.sendRequest('asset-db', 'refresh-asset', targetPath).then(() => {
                 resolve({
                     success: true,
                     message: `Assets refreshed in: ${targetPath}`
@@ -569,7 +572,7 @@ export class ProjectTools implements ToolExecutor {
             const targetPath = targetFolder.startsWith('db://') ?
                 targetFolder : `db://assets/${targetFolder}`;
 
-            Editor.Message.request('asset-db', 'import-asset', sourcePath, `${targetPath}/${fileName}`).then((result: any) => {
+            this.adapter.sendRequest('asset-db', 'import-asset', sourcePath, `${targetPath}/${fileName}`).then((result: any) => {
                 resolve({
                     success: true,
                     data: {
@@ -586,7 +589,7 @@ export class ProjectTools implements ToolExecutor {
 
     private async getAssetInfo(assetPath: string): Promise<ToolResponse> {
         return new Promise((resolve) => {
-            Editor.Message.request('asset-db', 'query-asset-info', assetPath).then((assetInfo: any) => {
+            this.adapter.sendRequest('asset-db', 'query-asset-info', assetPath).then((assetInfo: any) => {
                 if (!assetInfo) {
                     throw new Error('Asset not found');
                 }
@@ -638,7 +641,7 @@ export class ProjectTools implements ToolExecutor {
             }
 
             // Note: query-assets API parameters corrected based on documentation
-            Editor.Message.request('asset-db', 'query-assets', { pattern: pattern }).then((results: any[]) => {
+            this.adapter.sendRequest('asset-db', 'query-assets', { pattern: pattern }).then((results: any[]) => {
                 const assets = results.map(asset => ({
                     name: asset.name,
                     uuid: asset.uuid,
@@ -666,7 +669,7 @@ export class ProjectTools implements ToolExecutor {
     private async getBuildSettings(): Promise<ToolResponse> {
         return new Promise((resolve) => {
             // Probe whether the headless builder worker is available before advertising build actions
-            Editor.Message.request('builder', 'query-worker-ready').then((ready: boolean) => {
+            this.adapter.sendRequest('builder', 'query-worker-ready').then((ready: boolean) => {
                 resolve({
                     success: true,
                     data: {
@@ -689,7 +692,7 @@ export class ProjectTools implements ToolExecutor {
 
     private async openBuildPanel(): Promise<ToolResponse> {
         return new Promise((resolve) => {
-            Editor.Message.request('builder', 'open').then(() => {
+            this.adapter.sendRequest('builder', 'open').then(() => {
                 resolve({
                     success: true,
                     message: 'Build panel opened successfully'
@@ -702,7 +705,7 @@ export class ProjectTools implements ToolExecutor {
 
     private async checkBuilderStatus(): Promise<ToolResponse> {
         return new Promise((resolve) => {
-            Editor.Message.request('builder', 'query-worker-ready').then((ready: boolean) => {
+            this.adapter.sendRequest('builder', 'query-worker-ready').then((ready: boolean) => {
                 resolve({
                     success: true,
                     data: {
@@ -744,7 +747,7 @@ export class ProjectTools implements ToolExecutor {
                 rename: !overwrite
             };
 
-            Editor.Message.request('asset-db', 'create-asset', url, content, options).then((result: any) => {
+            this.adapter.sendRequest('asset-db', 'create-asset', url, content, options).then((result: any) => {
                 if (result && result.uuid) {
                     resolve({
                         success: true,
@@ -776,7 +779,7 @@ export class ProjectTools implements ToolExecutor {
                 rename: !overwrite
             };
 
-            Editor.Message.request('asset-db', 'copy-asset', source, target, options).then((result: any) => {
+            this.adapter.sendRequest('asset-db', 'copy-asset', source, target, options).then((result: any) => {
                 if (result && result.uuid) {
                     resolve({
                         success: true,
@@ -809,7 +812,7 @@ export class ProjectTools implements ToolExecutor {
                 rename: !overwrite
             };
 
-            Editor.Message.request('asset-db', 'move-asset', source, target, options).then((result: any) => {
+            this.adapter.sendRequest('asset-db', 'move-asset', source, target, options).then((result: any) => {
                 if (result && result.uuid) {
                     resolve({
                         success: true,
@@ -837,7 +840,7 @@ export class ProjectTools implements ToolExecutor {
 
     private async deleteAsset(url: string): Promise<ToolResponse> {
         return new Promise((resolve) => {
-            Editor.Message.request('asset-db', 'delete-asset', url).then((result: any) => {
+            this.adapter.sendRequest('asset-db', 'delete-asset', url).then((result: any) => {
                 resolve({
                     success: true,
                     data: {
@@ -853,7 +856,7 @@ export class ProjectTools implements ToolExecutor {
 
     private async saveAsset(url: string, content: string): Promise<ToolResponse> {
         return new Promise((resolve) => {
-            Editor.Message.request('asset-db', 'save-asset', url, content).then((result: any) => {
+            this.adapter.sendRequest('asset-db', 'save-asset', url, content).then((result: any) => {
                 if (result && result.uuid) {
                     resolve({
                         success: true,
@@ -880,7 +883,7 @@ export class ProjectTools implements ToolExecutor {
 
     private async reimportAsset(url: string): Promise<ToolResponse> {
         return new Promise((resolve) => {
-            Editor.Message.request('asset-db', 'reimport-asset', url).then(() => {
+            this.adapter.sendRequest('asset-db', 'reimport-asset', url).then(() => {
                 resolve({
                     success: true,
                     data: {
@@ -896,7 +899,7 @@ export class ProjectTools implements ToolExecutor {
 
     private async queryAssetPath(url: string): Promise<ToolResponse> {
         return new Promise((resolve) => {
-            Editor.Message.request('asset-db', 'query-path', url).then((path: string | null) => {
+            this.adapter.sendRequest('asset-db', 'query-path', url).then((path: string | null) => {
                 if (path) {
                     resolve({
                         success: true,
@@ -917,7 +920,7 @@ export class ProjectTools implements ToolExecutor {
 
     private async queryAssetUuid(url: string): Promise<ToolResponse> {
         return new Promise((resolve) => {
-            Editor.Message.request('asset-db', 'query-uuid', url).then((uuid: string | null) => {
+            this.adapter.sendRequest('asset-db', 'query-uuid', url).then((uuid: string | null) => {
                 if (uuid) {
                     resolve({
                         success: true,
@@ -938,7 +941,7 @@ export class ProjectTools implements ToolExecutor {
 
     private async queryAssetUrl(uuid: string): Promise<ToolResponse> {
         return new Promise((resolve) => {
-            Editor.Message.request('asset-db', 'query-url', uuid).then((url: string | null) => {
+            this.adapter.sendRequest('asset-db', 'query-url', uuid).then((url: string | null) => {
                 if (url) {
                     resolve({
                         success: true,
@@ -1061,7 +1064,7 @@ export class ProjectTools implements ToolExecutor {
                         for (const subAsset of possibleSubAssets) {
                             try {
                                 // Try to get URL for the sub-asset to verify it exists
-                                const subAssetUrl = await Editor.Message.request('asset-db', 'query-url', subAsset.uuid);
+                                const subAssetUrl = await this.adapter.sendRequest('asset-db', 'query-url', subAsset.uuid);
                                 if (subAssetUrl) {
                                     detailedInfo.subAssets.push({
                                         type: subAsset.type,

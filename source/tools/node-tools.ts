@@ -1,8 +1,13 @@
 import { ToolDefinition, ToolResponse, ToolExecutor, NodeInfo } from '../types';
 import { ComponentTools } from './component-tools';
+import { IEditorAdapter } from '../adapters/editor-adapter';
 
 export class NodeTools implements ToolExecutor {
-    private componentTools = new ComponentTools();
+    private readonly componentTools: ComponentTools;
+
+    constructor(private readonly adapter: IEditorAdapter) {
+        this.componentTools = new ComponentTools(adapter);
+    }
     getTools(): ToolDefinition[] {
         return [
             {
@@ -314,7 +319,7 @@ export class NodeTools implements ToolExecutor {
                 // If parent omitted, resolve the scene root UUID from the editor scene graph
                 if (!targetParentUuid) {
                     try {
-                        const sceneInfo = await Editor.Message.request('scene', 'query-node-tree');
+                        const sceneInfo = await this.adapter.sendRequest('scene', 'query-node-tree');
                         if (sceneInfo && typeof sceneInfo === 'object' && !Array.isArray(sceneInfo) && Object.prototype.hasOwnProperty.call(sceneInfo, 'uuid')) {
                             targetParentUuid = (sceneInfo as any).uuid;
                             console.log(`No parent specified, using scene root: ${targetParentUuid}`);
@@ -322,7 +327,7 @@ export class NodeTools implements ToolExecutor {
                             targetParentUuid = sceneInfo[0].uuid;
                             console.log(`No parent specified, using scene root: ${targetParentUuid}`);
                         } else {
-                            const currentScene = await Editor.Message.request('scene', 'query-current-scene');
+                            const currentScene = await this.adapter.sendRequest('scene', 'query-current-scene');
                             if (currentScene && currentScene.uuid) {
                                 targetParentUuid = currentScene.uuid;
                             }
@@ -336,7 +341,7 @@ export class NodeTools implements ToolExecutor {
                 let finalAssetUuid = args.assetUuid;
                 if (args.assetPath && !finalAssetUuid) {
                     try {
-                        const assetInfo = await Editor.Message.request('asset-db', 'query-asset-info', args.assetPath);
+                        const assetInfo = await this.adapter.sendRequest('asset-db', 'query-asset-info', args.assetPath);
                         if (assetInfo && assetInfo.uuid) {
                             finalAssetUuid = assetInfo.uuid;
                             console.log(`Asset path '${args.assetPath}' resolved to UUID: ${finalAssetUuid}`);
@@ -392,14 +397,14 @@ export class NodeTools implements ToolExecutor {
                 console.log('Creating node with options:', createNodeOptions);
 
                 // Ask the scene service to materialize the node with the assembled options
-                const nodeUuid = await Editor.Message.request('scene', 'create-node', createNodeOptions);
+                const nodeUuid = await this.adapter.sendRequest('scene', 'create-node', createNodeOptions);
                 const uuid = Array.isArray(nodeUuid) ? nodeUuid[0] : nodeUuid;
 
                 // Defer reparent so the engine finishes registering the new UUID
                 if (args.siblingIndex !== undefined && args.siblingIndex >= 0 && uuid && targetParentUuid) {
                     try {
                         await new Promise(resolve => setTimeout(resolve, 100)); // Yield one tick for scene graph consistency
-                        await Editor.Message.request('scene', 'set-parent', {
+                        await this.adapter.sendRequest('scene', 'set-parent', {
                             parent: targetParentUuid,
                             uuids: [uuid],
                             keepWorldTransform: args.keepWorldTransform || false
@@ -499,7 +504,7 @@ export class NodeTools implements ToolExecutor {
 
     private async getNodeInfo(uuid: string): Promise<ToolResponse> {
         return new Promise((resolve) => {
-            Editor.Message.request('scene', 'query-node', uuid).then((nodeData: any) => {
+            this.adapter.sendRequest('scene', 'query-node', uuid).then((nodeData: any) => {
                 if (!nodeData) {
                     resolve({
                         success: false,
@@ -536,7 +541,7 @@ export class NodeTools implements ToolExecutor {
         return new Promise((resolve) => {
             // Note: 'query-nodes-by-name' API doesn't exist in official documentation
             // Using tree traversal as primary approach
-            Editor.Message.request('scene', 'query-node-tree').then((tree: any) => {
+            this.adapter.sendRequest('scene', 'query-node-tree').then((tree: any) => {
                 const nodes: any[] = [];
                 
                 const searchTree = (node: any, currentPath: string = '') => {
@@ -574,7 +579,7 @@ export class NodeTools implements ToolExecutor {
                     args: [pattern, exactMatch]
                 };
                 
-                Editor.Message.request('scene', 'execute-scene-script', options).then((result: any) => {
+                this.adapter.sendRequest('scene', 'execute-scene-script', options).then((result: any) => {
                     resolve(result);
                 }).catch((err2: Error) => {
                     resolve({ success: false, error: `Tree search failed: ${err.message}, Scene script failed: ${err2.message}` });
@@ -586,7 +591,7 @@ export class NodeTools implements ToolExecutor {
     private async findNodeByName(name: string): Promise<ToolResponse> {
         return new Promise((resolve) => {
             // Editor API
-            Editor.Message.request('scene', 'query-node-tree').then((tree: any) => {
+            this.adapter.sendRequest('scene', 'query-node-tree').then((tree: any) => {
                 const foundNode = this.searchNodeInTree(tree, name);
                 if (foundNode) {
                     resolve({
@@ -608,7 +613,7 @@ export class NodeTools implements ToolExecutor {
                     args: [name]
                 };
                 
-                Editor.Message.request('scene', 'execute-scene-script', options).then((result: any) => {
+                this.adapter.sendRequest('scene', 'execute-scene-script', options).then((result: any) => {
                     resolve(result);
                 }).catch((err2: Error) => {
                     resolve({ success: false, error: `Direct API failed: ${err.message}, Scene script failed: ${err2.message}` });
@@ -637,7 +642,7 @@ export class NodeTools implements ToolExecutor {
     private async getAllNodes(): Promise<ToolResponse> {
         return new Promise((resolve) => {
             // Walk the entire scene tree returned by the editor
-            Editor.Message.request('scene', 'query-node-tree').then((tree: any) => {
+            this.adapter.sendRequest('scene', 'query-node-tree').then((tree: any) => {
                 const nodes: any[] = [];
                 
                 const traverseTree = (node: any) => {
@@ -675,7 +680,7 @@ export class NodeTools implements ToolExecutor {
                     args: []
                 };
                 
-                Editor.Message.request('scene', 'execute-scene-script', options).then((result: any) => {
+                this.adapter.sendRequest('scene', 'execute-scene-script', options).then((result: any) => {
                     resolve(result);
                 }).catch((err2: Error) => {
                     resolve({ success: false, error: `Direct API failed: ${err.message}, Scene script failed: ${err2.message}` });
@@ -697,7 +702,7 @@ export class NodeTools implements ToolExecutor {
     private async setNodeProperty(uuid: string, property: string, value: any): Promise<ToolResponse> {
         return new Promise((resolve) => {
             // Editor API
-            Editor.Message.request('scene', 'set-property', {
+            this.adapter.sendRequest('scene', 'set-property', {
                 uuid: uuid,
                 path: property,
                 dump: {
@@ -737,7 +742,7 @@ export class NodeTools implements ToolExecutor {
                     args: [uuid, property, value]
                 };
                 
-                Editor.Message.request('scene', 'execute-scene-script', options).then((result: any) => {
+                this.adapter.sendRequest('scene', 'execute-scene-script', options).then((result: any) => {
                     resolve(result);
                 }).catch((err2: Error) => {
                     resolve({ success: false, error: `Direct API failed: ${err.message}, Scene script failed: ${err2.message}` });
@@ -771,7 +776,7 @@ export class NodeTools implements ToolExecutor {
                     }
                     
                     updatePromises.push(
-                        Editor.Message.request('scene', 'set-property', {
+                        this.adapter.sendRequest('scene', 'set-property', {
                             uuid: uuid,
                             path: 'position',
                             dump: { value: normalizedPosition.value }
@@ -787,7 +792,7 @@ export class NodeTools implements ToolExecutor {
                     }
                     
                     updatePromises.push(
-                        Editor.Message.request('scene', 'set-property', {
+                        this.adapter.sendRequest('scene', 'set-property', {
                             uuid: uuid,
                             path: 'rotation',
                             dump: { value: normalizedRotation.value }
@@ -803,7 +808,7 @@ export class NodeTools implements ToolExecutor {
                     }
                     
                     updatePromises.push(
-                        Editor.Message.request('scene', 'set-property', {
+                        this.adapter.sendRequest('scene', 'set-property', {
                             uuid: uuid,
                             path: 'scale',
                             dump: { value: normalizedScale.value }
@@ -957,7 +962,7 @@ export class NodeTools implements ToolExecutor {
 
     private async deleteNode(uuid: string): Promise<ToolResponse> {
         return new Promise((resolve) => {
-            Editor.Message.request('scene', 'remove-node', { uuid: uuid }).then(() => {
+            this.adapter.sendRequest('scene', 'remove-node', { uuid: uuid }).then(() => {
                 resolve({
                     success: true,
                     message: 'Node deleted successfully'
@@ -971,7 +976,7 @@ export class NodeTools implements ToolExecutor {
     private async moveNode(nodeUuid: string, newParentUuid: string, siblingIndex: number = -1): Promise<ToolResponse> {
         return new Promise((resolve) => {
             // Use correct set-parent API instead of move-node
-            Editor.Message.request('scene', 'set-parent', {
+            this.adapter.sendRequest('scene', 'set-parent', {
                 parent: newParentUuid,
                 uuids: [nodeUuid],
                 keepWorldTransform: false
@@ -989,7 +994,7 @@ export class NodeTools implements ToolExecutor {
     private async duplicateNode(uuid: string, includeChildren: boolean = true): Promise<ToolResponse> {
         return new Promise((resolve) => {
             // Note: includeChildren parameter is accepted for future use but not currently implemented
-            Editor.Message.request('scene', 'duplicate-node', uuid).then((result: any) => {
+            this.adapter.sendRequest('scene', 'duplicate-node', uuid).then((result: any) => {
                 resolve({
                     success: true,
                     data: {

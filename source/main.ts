@@ -2,9 +2,12 @@ import { MCPServer } from './mcp-server';
 import { readSettings, saveSettings } from './settings';
 import { MCPServerSettings } from './types';
 import { ToolManager } from './tools/tool-manager';
+import { IEditorAdapter } from './adapters/editor-adapter';
+import { EditorAdapter3x } from './adapters/editor-adapter-3x';
 
 let mcpServer: MCPServer | null = null;
 let toolManager: ToolManager;
+let editorAdapter: IEditorAdapter;
 
 /**
  * @en Registration method for the main process of Extension
@@ -69,10 +72,10 @@ export const methods: { [key: string]: (...any: any) => any } = {
         saveSettings(settings);
         if (mcpServer) {
             mcpServer.stop();
-            mcpServer = new MCPServer(settings);
+            mcpServer = new MCPServer(settings, editorAdapter);
             mcpServer.start();
         } else {
-            mcpServer = new MCPServer(settings);
+            mcpServer = new MCPServer(settings, editorAdapter);
             mcpServer.start();
         }
     },
@@ -223,13 +226,15 @@ export const methods: { [key: string]: (...any: any) => any } = {
  */
 export function load() {
     console.log('Cocos MCP Server extension loaded');
-    
+
+    editorAdapter = new EditorAdapter3x();
+
     // Initialize tool manager
-    toolManager = new ToolManager();
-    
+    toolManager = new ToolManager(editorAdapter);
+
     // Load persisted settings
     const settings = readSettings();
-    mcpServer = new MCPServer(settings);
+    mcpServer = new MCPServer(settings, editorAdapter);
     
     // Seed MCP server with enabled tools
     const enabledTools = toolManager.getEnabledTools();

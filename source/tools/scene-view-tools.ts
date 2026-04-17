@@ -1,6 +1,9 @@
 import { ToolDefinition, ToolResponse, ToolExecutor } from '../types';
+import { IEditorAdapter } from '../adapters/editor-adapter';
 
 export class SceneViewTools implements ToolExecutor {
+    constructor(private readonly adapter: IEditorAdapter) {}
+
     getTools(): ToolDefinition[] {
         return [
             {
@@ -271,7 +274,7 @@ export class SceneViewTools implements ToolExecutor {
 
     private async changeGizmoTool(name: string): Promise<ToolResponse> {
         return new Promise((resolve) => {
-            Editor.Message.request('scene', 'change-gizmo-tool', name).then(() => {
+            this.adapter.sendRequest('scene', 'change-gizmo-tool', name).then(() => {
                 resolve({
                     success: true,
                     message: `Gizmo tool changed to '${name}'`
@@ -284,7 +287,7 @@ export class SceneViewTools implements ToolExecutor {
 
     private async queryGizmoToolName(): Promise<ToolResponse> {
         return new Promise((resolve) => {
-            Editor.Message.request('scene', 'query-gizmo-tool-name').then((toolName: string) => {
+            this.adapter.sendRequest('scene', 'query-gizmo-tool-name').then((toolName: string) => {
                 resolve({
                     success: true,
                     data: {
@@ -300,7 +303,7 @@ export class SceneViewTools implements ToolExecutor {
 
     private async changeGizmoPivot(name: string): Promise<ToolResponse> {
         return new Promise((resolve) => {
-            Editor.Message.request('scene', 'change-gizmo-pivot', name).then(() => {
+            this.adapter.sendRequest('scene', 'change-gizmo-pivot', name).then(() => {
                 resolve({
                     success: true,
                     message: `Gizmo pivot changed to '${name}'`
@@ -313,7 +316,7 @@ export class SceneViewTools implements ToolExecutor {
 
     private async queryGizmoPivot(): Promise<ToolResponse> {
         return new Promise((resolve) => {
-            Editor.Message.request('scene', 'query-gizmo-pivot').then((pivotName: string) => {
+            this.adapter.sendRequest('scene', 'query-gizmo-pivot').then((pivotName: string) => {
                 resolve({
                     success: true,
                     data: {
@@ -329,7 +332,7 @@ export class SceneViewTools implements ToolExecutor {
 
     private async queryGizmoViewMode(): Promise<ToolResponse> {
         return new Promise((resolve) => {
-            Editor.Message.request('scene', 'query-gizmo-view-mode').then((viewMode: string) => {
+            this.adapter.sendRequest('scene', 'query-gizmo-view-mode').then((viewMode: string) => {
                 resolve({
                     success: true,
                     data: {
@@ -345,7 +348,7 @@ export class SceneViewTools implements ToolExecutor {
 
     private async changeGizmoCoordinate(type: string): Promise<ToolResponse> {
         return new Promise((resolve) => {
-            Editor.Message.request('scene', 'change-gizmo-coordinate', type).then(() => {
+            this.adapter.sendRequest('scene', 'change-gizmo-coordinate', type).then(() => {
                 resolve({
                     success: true,
                     message: `Coordinate system changed to '${type}'`
@@ -358,7 +361,7 @@ export class SceneViewTools implements ToolExecutor {
 
     private async queryGizmoCoordinate(): Promise<ToolResponse> {
         return new Promise((resolve) => {
-            Editor.Message.request('scene', 'query-gizmo-coordinate').then((coordinate: string) => {
+            this.adapter.sendRequest('scene', 'query-gizmo-coordinate').then((coordinate: string) => {
                 resolve({
                     success: true,
                     data: {
@@ -374,7 +377,7 @@ export class SceneViewTools implements ToolExecutor {
 
     private async changeViewMode2D3D(is2D: boolean): Promise<ToolResponse> {
         return new Promise((resolve) => {
-            Editor.Message.request('scene', 'change-is2D', is2D).then(() => {
+            this.adapter.sendRequest('scene', 'change-is2D', is2D).then(() => {
                 resolve({
                     success: true,
                     message: `View mode changed to ${is2D ? '2D' : '3D'}`
@@ -387,7 +390,7 @@ export class SceneViewTools implements ToolExecutor {
 
     private async queryViewMode2D3D(): Promise<ToolResponse> {
         return new Promise((resolve) => {
-            Editor.Message.request('scene', 'query-is2D').then((is2D: boolean) => {
+            this.adapter.sendRequest('scene', 'query-is2D').then((is2D: boolean) => {
                 resolve({
                     success: true,
                     data: {
@@ -404,7 +407,7 @@ export class SceneViewTools implements ToolExecutor {
 
     private async setGridVisible(visible: boolean): Promise<ToolResponse> {
         return new Promise((resolve) => {
-            Editor.Message.request('scene', 'set-grid-visible', visible).then(() => {
+            this.adapter.sendRequest('scene', 'set-grid-visible', visible).then(() => {
                 resolve({
                     success: true,
                     message: `Grid ${visible ? 'shown' : 'hidden'}`
@@ -417,7 +420,7 @@ export class SceneViewTools implements ToolExecutor {
 
     private async queryGridVisible(): Promise<ToolResponse> {
         return new Promise((resolve) => {
-            Editor.Message.request('scene', 'query-is-grid-visible').then((visible: boolean) => {
+            this.adapter.sendRequest('scene', 'query-is-grid-visible').then((visible: boolean) => {
                 resolve({
                     success: true,
                     data: {
@@ -433,7 +436,7 @@ export class SceneViewTools implements ToolExecutor {
 
     private async setIconGizmo3D(is3D: boolean): Promise<ToolResponse> {
         return new Promise((resolve) => {
-            Editor.Message.request('scene', 'set-icon-gizmo-3d', is3D).then(() => {
+            this.adapter.sendRequest('scene', 'set-icon-gizmo-3d', is3D).then(() => {
                 resolve({
                     success: true,
                     message: `IconGizmo set to ${is3D ? '3D' : '2D'} mode`
@@ -446,7 +449,7 @@ export class SceneViewTools implements ToolExecutor {
 
     private async queryIconGizmo3D(): Promise<ToolResponse> {
         return new Promise((resolve) => {
-            Editor.Message.request('scene', 'query-is-icon-gizmo-3d').then((is3D: boolean) => {
+            this.adapter.sendRequest('scene', 'query-is-icon-gizmo-3d').then((is3D: boolean) => {
                 resolve({
                     success: true,
                     data: {
@@ -463,7 +466,7 @@ export class SceneViewTools implements ToolExecutor {
 
     private async setIconGizmoSize(size: number): Promise<ToolResponse> {
         return new Promise((resolve) => {
-            Editor.Message.request('scene', 'set-icon-gizmo-size', size).then(() => {
+            this.adapter.sendRequest('scene', 'set-icon-gizmo-size', size).then(() => {
                 resolve({
                     success: true,
                     message: `IconGizmo size set to ${size}`
@@ -476,7 +479,7 @@ export class SceneViewTools implements ToolExecutor {
 
     private async queryIconGizmoSize(): Promise<ToolResponse> {
         return new Promise((resolve) => {
-            Editor.Message.request('scene', 'query-icon-gizmo-size').then((size: number) => {
+            this.adapter.sendRequest('scene', 'query-icon-gizmo-size').then((size: number) => {
                 resolve({
                     success: true,
                     data: {
@@ -492,7 +495,7 @@ export class SceneViewTools implements ToolExecutor {
 
     private async focusCameraOnNodes(uuids: string[] | null): Promise<ToolResponse> {
         return new Promise((resolve) => {
-            Editor.Message.request('scene', 'focus-camera', uuids || []).then(() => {
+            this.adapter.sendRequest('scene', 'focus-camera', uuids || []).then(() => {
                 const message = uuids === null ? 
                     'Camera focused on all nodes' : 
                     `Camera focused on ${uuids.length} node(s)`;
@@ -508,7 +511,7 @@ export class SceneViewTools implements ToolExecutor {
 
     private async alignCameraWithView(): Promise<ToolResponse> {
         return new Promise((resolve) => {
-            Editor.Message.request('scene', 'align-with-view').then(() => {
+            this.adapter.sendRequest('scene', 'align-with-view').then(() => {
                 resolve({
                     success: true,
                     message: 'Scene camera aligned with current view'
@@ -521,7 +524,7 @@ export class SceneViewTools implements ToolExecutor {
 
     private async alignViewWithNode(): Promise<ToolResponse> {
         return new Promise((resolve) => {
-            Editor.Message.request('scene', 'align-with-view-node').then(() => {
+            this.adapter.sendRequest('scene', 'align-with-view-node').then(() => {
                 resolve({
                     success: true,
                     message: 'View aligned with selected node'

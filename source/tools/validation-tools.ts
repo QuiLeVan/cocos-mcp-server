@@ -1,6 +1,9 @@
 import { ToolDefinition, ToolResponse, ToolExecutor } from '../types';
+import { IEditorAdapter } from '../adapters/editor-adapter';
 
 export class ValidationTools implements ToolExecutor {
+    constructor(private readonly _adapter: IEditorAdapter) {}
+
     getTools(): ToolDefinition[] {
         return [
             {

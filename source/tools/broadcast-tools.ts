@@ -1,10 +1,12 @@
 import { ToolDefinition, ToolResponse, ToolExecutor } from '../types';
+import { IEditorAdapter } from '../adapters/editor-adapter';
 
 export class BroadcastTools implements ToolExecutor {
     private listeners: Map<string, Function[]> = new Map();
+    private disposers: Map<string, Array<() => void>> = new Map();
     private messageLog: Array<{ message: string; data: any; timestamp: number }> = [];
 
-    constructor() {
+    constructor(private readonly adapter: IEditorAdapter) {
         this.setupBroadcastListeners();
     }
 
@@ -134,20 +136,21 @@ export class BroadcastTools implements ToolExecutor {
         }
         this.listeners.get(messageType)!.push(listener);
 
-        // Editor - ，Editor.Message API
-        // Editor.Message.on(messageType, listener);
-        console.log(`[BroadcastTools] Added listener for ${messageType} (simulated)`);
+        const dispose = this.adapter.onBroadcast(messageType, listener);
+        if (!this.disposers.has(messageType)) {
+            this.disposers.set(messageType, []);
+        }
+        this.disposers.get(messageType)!.push(dispose);
+        console.log(`[BroadcastTools] Added listener for ${messageType}`);
     }
 
     private removeBroadcastListener(messageType: string): void {
-        const listeners = this.listeners.get(messageType);
-        if (listeners) {
-            listeners.forEach(listener => {
-                // Editor.Message.off(messageType, listener);
-                console.log(`[BroadcastTools] Removed listener for ${messageType} (simulated)`);
-            });
-            this.listeners.delete(messageType);
+        const toDispose = this.disposers.get(messageType);
+        if (toDispose) {
+            toDispose.forEach((d) => d());
+            this.disposers.delete(messageType);
         }
+        this.listeners.delete(messageType);
     }
 
     private async getBroadcastLog(limit: number = 50, messageType?: string): Promise<ToolResponse> {
