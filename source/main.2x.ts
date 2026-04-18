@@ -76,19 +76,23 @@ function handleGetServerStatus(event: any): void {
 function handleUpdateSettings(event: any, settings: MCPServerSettings): void {
     try {
         saveSettings(settings);
-        if (mcpServer && editorAdapter) {
+        if (!editorAdapter) {
+            reply(event, new Error('Editor adapter not initialized'));
+            return;
+        }
+        const wasRunning = !!(mcpServer && mcpServer.getStatus().running);
+        if (mcpServer) {
             mcpServer.stop();
-            mcpServer = new MCPServer(settings, editorAdapter);
+        }
+        mcpServer = new MCPServer(settings, editorAdapter);
+        if (toolManager) {
+            mcpServer.updateEnabledTools(toolManager.getEnabledTools());
+        }
+        if (wasRunning) {
             mcpServer
                 .start()
                 .then(() => notifyServerStatusChanged())
                 .catch((err) => console.error('[MCP 2.x] restart after settings failed:', err));
-        } else if (editorAdapter) {
-            mcpServer = new MCPServer(settings, editorAdapter);
-            mcpServer
-                .start()
-                .then(() => notifyServerStatusChanged())
-                .catch((err) => console.error('[MCP 2.x] start after settings failed:', err));
         }
         notifyServerStatusChanged();
         reply(event, null, { success: true });

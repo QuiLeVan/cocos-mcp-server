@@ -158,6 +158,14 @@ Editor.Panel.extend({
 
     async onStart(this: any) {
         try {
+            // Sync UI values before starting so the typed port takes effect
+            // even when the user hasn't clicked "Save settings" first.
+            const cur = await sendMain<ServerStatusPayload>('get-server-status');
+            const port = Math.floor(Number(this.$portInput.value)) || cur.settings.port;
+            const autoStart = !!this.$autostartInput.checked;
+            if (port !== cur.settings.port || autoStart !== cur.settings.autoStart) {
+                await sendMain('update-settings', { ...cur.settings, port, autoStart });
+            }
             await sendMain('start-server');
             const st = await sendMain<ServerStatusPayload>('get-server-status');
             this.applyStatus(st);
