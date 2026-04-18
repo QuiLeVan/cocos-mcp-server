@@ -2,6 +2,7 @@ import * as fs from 'fs';
 import * as path from 'path';
 import { ToolResponse } from '../types';
 import { ErrorCodes, engineUnsupported } from '../errors';
+import { from3xShape, isCocos2xPrefabSerializedArray, to3xShape } from './prefab-format-2x';
 import {
     IEditorAdapter,
     CreateNodeArgs,
@@ -646,17 +647,101 @@ export class EditorAdapter2x implements IEditorAdapter {
             } catch {
                 parsed = content;
             }
-            return { success: true, data: parsed };
+            if (typeof parsed === 'object' && parsed !== null && isCocos2xPrefabSerializedArray(parsed)) {
+                const { data, warnings } = to3xShape(parsed);
+                const w = warnings.length ? warnings.join('; ') : undefined;
+                return {
+                    success: true,
+                    data: JSON.stringify(data, null, 2),
+                    warning: w,
+                    instruction: 'experimental_prefab_bridge',
+                };
+            }
+            return { success: true, data: typeof parsed === 'string' ? parsed : JSON.stringify(parsed, null, 2) };
         } catch (e) {
             return toolErr(e);
         }
     }
 
-    public async writePrefab(_path: string, _content: unknown): Promise<ToolResponse> {
-        return {
-            success: false,
-            error: ErrorCodes.PREFAB_WRITE_REQUIRES_TRANSLATOR,
-        };
+    public async writePrefab(assetPath: string, content: unknown): Promise<ToolResponse> {
+        try {
+            let envelope: unknown;
+            if (typeof content === 'string') {
+                try {
+                    envelope = JSON.parse(content);
+                } catch (e) {
+                    return { success: false, error: `writePrefab: invalid JSON: ${errMsg(e)}` };
+                }
+            } else {
+                envelope = content;
+            }
+            if (!envelope || typeof envelope !== 'object') {
+                return { success: false, error: 'writePrefab: expected JSON object or string' };
+            }
+            let dryRun = false;
+            let body: unknown = envelope;
+            if (!Array.isArray(envelope) && typeof (envelope as any).__mcpDryRun === 'boolean') {
+                dryRun = (envelope as any).__mcpDryRun === true;
+                const rest = { ...(envelope as Record<string, unknown>) };
+                delete rest.__mcpDryRun;
+                if (rest.prefab !== undefined) {
+                    body = rest.prefab;
+                } else if (rest.payload !== undefined) {
+                    body = rest.payload;
+                } else {
+                    body = rest;
+                }
+            }
+            const { data: records, warnings, dryRunRecords } = from3xShape(body, { dryRun });
+            const blocked = warnings.some((w) => w.startsWith('blocked_unsupported_component_types'));
+            if (blocked) {
+                return {
+                    success: false,
+                    error: ErrorCodes.PREFAB_CONVERSION_BLOCKED,
+                    instruction: warnings.join('; '),
+                };
+            }
+            if (!Array.isArray(records) || records.length === 0) {
+                return {
+                    success: false,
+                    error: ErrorCodes.PREFAB_WRITE_REQUIRES_TRANSLATOR,
+                    instruction: warnings.length ? warnings.join('; ') : undefined,
+                };
+            }
+            if (dryRun) {
+                const preview = dryRunRecords ?? records;
+                return {
+                    success: true,
+                    message: 'dry-run: no file written',
+                    data: JSON.stringify(preview, null, 2),
+                    warning: warnings.length ? warnings.join('; ') : undefined,
+                    instruction: 'experimental_prefab_bridge_dry_run',
+                };
+            }
+            let dbUrl = assetPath;
+            if (assetPath && !assetPath.startsWith('db://') && !assetPath.includes('/')) {
+                dbUrl = await this.callAssetDb('queryUrlByUuid', assetPath);
+            }
+            const fsPath = dbUrlToProjectPath(this.projectPath, dbUrl);
+            if (!fsPath) {
+                return { success: false, error: `writePrefab: could not resolve path for ${assetPath}` };
+            }
+            const dir = path.dirname(fsPath);
+            if (!fs.existsSync(dir)) {
+                fs.mkdirSync(dir, { recursive: true });
+            }
+            fs.writeFileSync(fsPath, JSON.stringify(records, null, 2), 'utf8');
+            await this.callAssetDb('refresh', dbUrl.startsWith('db://') ? path.posix.dirname(dbUrl) : 'db://assets');
+            const w = warnings.length ? warnings.join('; ') : undefined;
+            return {
+                success: true,
+                message: `Wrote prefab (${records.length} serialized records)`,
+                warning: w,
+                instruction: 'experimental_prefab_bridge',
+            };
+        } catch (e) {
+            return toolErr(e);
+        }
     }
 
     public async instantiatePrefab(prefabUuidOrPath: string, parentUuid?: string): Promise<ToolResponse> {

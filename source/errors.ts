@@ -3,6 +3,7 @@ export const ErrorCodes = {
     ENGINE_UNSUPPORTED: 'ENGINE_UNSUPPORTED',
     UNSUPPORTED_ON_ENGINE_2: 'unsupported_on_engine_2',
     PREFAB_WRITE_REQUIRES_TRANSLATOR: 'prefab_write_requires_translator',
+    PREFAB_CONVERSION_BLOCKED: 'prefab_conversion_blocked',
 } as const;
 
 /**

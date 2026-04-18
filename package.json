@@ -15,7 +15,8 @@
         "watch:3x": "tsc -p tsconfig.3x.json --watch",
         "watch:2x": "tsc -p tsconfig.2x.json --watch",
         "use:2x": "node scripts/install-manifest.js 2x",
-        "use:3x": "node scripts/install-manifest.js 3x"
+        "use:3x": "node scripts/install-manifest.js 3x",
+        "verify:prefab": "npm run build:2x && node scripts/verify-prefab-format-2x.mjs"
     },
     "description": "i18n:cocos-mcp-server.description",
     "main": "./dist-3x/main.js",
