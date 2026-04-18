@@ -328,6 +328,79 @@ export class EditorAdapter2x implements IEditorAdapter {
         return '';
     }
 
+    /**
+     * Creator 2.x often leaves the runtime `cc.Scene` root `name` empty in the editor;
+     * the user-visible name matches the `.fire` / `.scene` asset basename instead.
+     */
+    private async trySceneDisplayNameFromAssetUuid(uuid: string): Promise<string> {
+        if (!uuid) {
+            return '';
+        }
+        const fromUrl = async (): Promise<string> => {
+            const url = await this.callAssetDb('queryUrlByUuid', uuid);
+            if (typeof url !== 'string' || !url) {
+                return '';
+            }
+            const base = path.basename(url);
+            const stripped = base.replace(/\.(fire|scene)$/i, '');
+            return stripped || base;
+        };
+        const fromPath = async (): Promise<string> => {
+            const fsPath = await this.callAssetDb('queryPathByUuid', uuid);
+            if (typeof fsPath !== 'string' || !fsPath) {
+                return '';
+            }
+            const base = path.basename(fsPath);
+            const stripped = base.replace(/\.(fire|scene)$/i, '');
+            return stripped || base;
+        };
+        try {
+            const n = await fromUrl();
+            if (n) {
+                return n;
+            }
+        } catch {
+            /* try path */
+        }
+        try {
+            return await fromPath();
+        } catch {
+            return '';
+        }
+    }
+
+    private async resolveSceneDisplayName(
+        runtimeName: string | undefined,
+        treeRootUuid: string,
+    ): Promise<string> {
+        const trimmed =
+            typeof runtimeName === 'string' && runtimeName.trim().length > 0
+                ? runtimeName.trim()
+                : '';
+        if (trimmed) {
+            return trimmed;
+        }
+        const fromTree =
+            typeof treeRootUuid === 'string' ? treeRootUuid.trim() : '';
+        const fromMain = this.readCurrentSceneAssetUuidFromMain();
+        // Prefer main-process UUID first: it tracks the open `.fire` asset. The runtime
+        // scene root id from the scene script often does not resolve via `uuidToUrl`.
+        const candidates: string[] = [];
+        if (fromMain) {
+            candidates.push(fromMain);
+        }
+        if (fromTree && fromTree !== fromMain) {
+            candidates.push(fromTree);
+        }
+        for (const u of candidates) {
+            const n = await this.trySceneDisplayNameFromAssetUuid(u);
+            if (n) {
+                return n;
+            }
+        }
+        return 'Current Scene';
+    }
+
     private async buildSceneTreeRoot(opts?: { includeComponents?: boolean }): Promise<any> {
         let info: any = null;
         let children: any[] = [];
@@ -344,11 +417,10 @@ export class EditorAdapter2x implements IEditorAdapter {
         }
 
         let uuid = typeof info?.uuid === 'string' && info.uuid.length > 0 ? info.uuid : '';
-        const name =
-            typeof info?.name === 'string' && info.name.length > 0 ? info.name : 'Current Scene';
         if (!uuid) {
             uuid = this.readCurrentSceneAssetUuidFromMain();
         }
+        const name = await this.resolveSceneDisplayName(info?.name, uuid);
         return {
             uuid,
             name,
