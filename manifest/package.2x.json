@@ -50,12 +50,13 @@
             "updateToolStatusBatch",
             "exportToolConfiguration",
             "importToolConfiguration",
-            "getEnabledTools"
+            "getEnabledTools",
+            "toggleTool"
         ]
     },
     "main-menu": {
         "i18n:MAIN_MENU.package.title/Cocos MCP Server": {
-            "message": "open-panel"
+            "message": "cocos-mcp-server:open-panel"
         }
     }
 }

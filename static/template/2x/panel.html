@@ -1,0 +1,42 @@
+<div class="mcp-root">
+  <section class="mcp-section">
+    <h2 class="mcp-h2">MCP server</h2>
+    <div class="mcp-row mcp-status-row">
+      <span id="status-dot" class="mcp-dot mcp-dot--unknown" aria-hidden="true"></span>
+      <span id="status-text" class="mcp-status-text">Unknown</span>
+    </div>
+    <div class="mcp-row">
+      <label class="mcp-label" for="port-input">Port</label>
+      <input id="port-input" class="mcp-input" type="number" min="1" max="65535" />
+    </div>
+    <div class="mcp-row">
+      <label class="mcp-label mcp-check">
+        <input id="autostart-input" type="checkbox" />
+        <span>Auto-start</span>
+      </label>
+    </div>
+    <div class="mcp-row mcp-actions">
+      <button id="btn-start" class="mcp-btn mcp-btn--primary" type="button">Start</button>
+      <button id="btn-stop" class="mcp-btn" type="button">Stop</button>
+      <button id="btn-apply" class="mcp-btn" type="button">Save settings</button>
+    </div>
+  </section>
+
+  <section class="mcp-section">
+    <h2 class="mcp-h2">Tools</h2>
+    <p class="mcp-hint">Enable or disable tools for the active configuration (mirrors 3.x tool manager).</p>
+    <div id="tool-list" class="mcp-tool-list"></div>
+  </section>
+
+  <section class="mcp-section">
+    <h2 class="mcp-h2">Configuration</h2>
+    <div class="mcp-row mcp-actions">
+      <button id="btn-export" class="mcp-btn" type="button">Export</button>
+    </div>
+    <label class="mcp-label" for="import-text">Import JSON</label>
+    <textarea id="import-text" class="mcp-textarea" rows="5" placeholder="Paste exported configuration JSON…"></textarea>
+    <div class="mcp-row mcp-actions">
+      <button id="btn-import" class="mcp-btn" type="button">Import</button>
+    </div>
+  </section>
+</div>

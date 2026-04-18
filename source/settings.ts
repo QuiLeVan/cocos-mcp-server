@@ -1,5 +1,6 @@
 import * as fs from 'fs';
 import * as path from 'path';
+import { detectEngineMajor } from './engine-version';
 import { MCPServerSettings, ToolManagerSettings, ToolConfiguration, ToolConfig } from './types';
 
 const DEFAULT_SETTINGS: MCPServerSettings = {
@@ -16,12 +17,23 @@ const DEFAULT_TOOL_MANAGER_SETTINGS: ToolManagerSettings = {
     maxConfigSlots: 5
 };
 
+function getProjectRoot(): string {
+    const editor = Editor as any;
+    if (detectEngineMajor() === 2) {
+        if (typeof editor.projectInfo?.path === 'string') {
+            return editor.projectInfo.path as string;
+        }
+        throw new Error('[MCP settings] 2.x host requires Editor.projectInfo.path');
+    }
+    return Editor.Project.path;
+}
+
 function getSettingsPath(): string {
-    return path.join(Editor.Project.path, 'settings', 'mcp-server.json');
+    return path.join(getProjectRoot(), 'settings', 'mcp-server.json');
 }
 
 function getToolManagerSettingsPath(): string {
-    return path.join(Editor.Project.path, 'settings', 'tool-manager.json');
+    return path.join(getProjectRoot(), 'settings', 'tool-manager.json');
 }
 
 function ensureSettingsDir(): void {

@@ -4,6 +4,9 @@
  */
 
 declare namespace Editor {
+    /** Resolve `packages://…` and other editor URLs to a filesystem path. */
+    function url(href: string): string;
+
     function log(msg: string): void;
     function warn(msg: string): void;
     function error(msg: string): void;
@@ -30,6 +33,8 @@ declare namespace Editor {
 
     namespace Panel {
         function extend(config: any): any;
+        /** Open the extension panel registered in `package.json` (package `name`). */
+        function open(panelId: string): void;
     }
 
     namespace Scene {
@@ -43,7 +48,9 @@ declare namespace Editor {
         function sendToPackage(pkg: string, method: string, ...args: any[]): void;
         /** Last argument may be a Node-style `cb(err, ...results)`. */
         function sendToMain(method: string, ...args: any[]): void;
-        function sendToPanel(panel: string, method: string, ...args: any[]): void;
+        function sendToPanel(panelId: string, message: string, ...args: any[]): void;
+        function sendToWins(message: string, ...args: any[]): void;
+        function sendToAll(message: string, ...args: any[]): void;
     }
 
     type AssetDbCallback<T = any> = (err: any, result?: T) => void;
