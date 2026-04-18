@@ -142,7 +142,25 @@ export class EditorAdapter2x implements IEditorAdapter {
 
     private callAssetDb(method: string, ...args: any[]): Promise<any> {
         const adb: any = (Editor as any).assetdb;
-        const fn = adb && adb[method];
+        if (!adb) {
+            return Promise.reject(new Error('Editor.assetdb is not available'));
+        }
+
+        // Creator 2.x AssetDB uses sync helpers with different names than 3.x `query-*` APIs.
+        if (method === 'queryUuidByUrl' && typeof adb.urlToUuid === 'function') {
+            return Promise.resolve(adb.urlToUuid(args[0]));
+        }
+        if (method === 'queryUrlByUuid' && typeof adb.uuidToUrl === 'function') {
+            return Promise.resolve(adb.uuidToUrl(args[0]));
+        }
+        if (method === 'queryPathByUuid' && typeof adb.uuidToFspath === 'function') {
+            return Promise.resolve(adb.uuidToFspath(args[0]));
+        }
+        if (method === 'queryMetaInfoByUuid' && typeof adb.assetInfoByUuid === 'function') {
+            return Promise.resolve(adb.assetInfoByUuid(args[0]));
+        }
+
+        const fn = adb[method];
         if (typeof fn !== 'function') {
             return Promise.reject(new Error(`assetdb.${method} is not available`));
         }
@@ -180,6 +198,76 @@ export class EditorAdapter2x implements IEditorAdapter {
         });
     }
 
+    /** Wraps `Editor.Ipc.sendToPanel` with a trailing Node-style callback → Promise. */
+    private sendToPanelIpc(panel: string, method: string, ...ipcArgs: any[]): Promise<any> {
+        return new Promise((resolve, reject) => {
+            const cb = (err: any, ...results: any[]) => {
+                if (err) {
+                    reject(err instanceof Error ? err : new Error(String(err)));
+                } else {
+                    resolve(results.length <= 1 ? results[0] : results);
+                }
+            };
+            try {
+                const ipc: any = (Editor as any).Ipc;
+                if (!ipc || typeof ipc.sendToPanel !== 'function') {
+                    reject(new Error('Editor.Ipc.sendToPanel is not available'));
+                    return;
+                }
+                ipc.sendToPanel(panel, method, ...ipcArgs, cb);
+            } catch (e) {
+                reject(e instanceof Error ? e : new Error(String(e)));
+            }
+        });
+    }
+
+    /**
+     * Creator 2.4.x: `scene:open` is not a valid scene-panel IPC. Main-process
+     * `scene:open-by-url` often never invokes its callback. Prefer `_Scene.loadSceneByUuid`
+     * in the scene script, then panel `scene:open-by-url` / `scene:open-by-uuid`.
+     */
+    private async openSceneByDbUrl(url: string): Promise<void> {
+        let uuid: string | null = null;
+        if (typeof url === 'string' && url.startsWith('db://')) {
+            uuid = await this.callAssetDb('queryUuidByUrl', url);
+        }
+        const errs: string[] = [];
+
+        if (uuid) {
+            try {
+                await this.callScene('loadSceneByUuid', uuid);
+                return;
+            } catch (e) {
+                errs.push(`sceneScript(loadSceneByUuid): ${errMsg(e)}`);
+            }
+        }
+
+        try {
+            await this.sendToPanelIpc('scene', 'scene:open-by-url', url);
+            return;
+        } catch (ePanelUrl) {
+            errs.push(`panel(scene:open-by-url): ${errMsg(ePanelUrl)}`);
+        }
+
+        if (uuid) {
+            try {
+                await this.sendToPanelIpc('scene', 'scene:open-by-uuid', uuid);
+                return;
+            } catch (eUuid) {
+                errs.push(`panel(scene:open-by-uuid): ${errMsg(eUuid)}`);
+            }
+        }
+
+        try {
+            await this.sendToMainIpc('scene:open-by-url', url);
+            return;
+        } catch (eMain) {
+            errs.push(`main(scene:open-by-url): ${errMsg(eMain)}`);
+        }
+
+        throw new Error(`open_scene: ${errs.join('; ')}`);
+    }
+
     private async resolvePrefabUrl(prefabUuidOrPath: string): Promise<string> {
         if (prefabUuidOrPath.startsWith('db://')) {
             return prefabUuidOrPath;
@@ -190,15 +278,83 @@ export class EditorAdapter2x implements IEditorAdapter {
         return this.callAssetDb('queryUrlByUuid', prefabUuidOrPath);
     }
 
+    /**
+     * When the scene-runtime root has no `uuid` / `_id` yet, the scene script still
+     * returns empty `uuid` → `scene_get_current_scene` fails. Creator 2.x main process
+     * usually tracks the open `.fire` asset on `Editor.remote`.
+     */
+    private readCurrentSceneAssetUuidFromMain(): string {
+        const ed: any = Editor as any;
+        const asId = (v: unknown): string => {
+            if (typeof v === 'string' && v.trim().length > 0) {
+                return v.trim();
+            }
+            if (typeof v === 'number' && Number.isFinite(v)) {
+                return String(v);
+            }
+            return '';
+        };
+
+        const remote = ed.remote;
+        if (remote) {
+            const flat = [
+                remote.currentSceneUuid,
+                remote.curSceneUuid,
+                remote.sceneUuid,
+                typeof remote.currentScene === 'string' ? remote.currentScene : null,
+            ];
+            for (const c of flat) {
+                const s = asId(c);
+                if (s) {
+                    return s;
+                }
+            }
+            const cur = remote.currentScene;
+            if (cur && typeof cur === 'object') {
+                const s =
+                    asId(cur.uuid) || asId(cur.assetUuid) || asId(cur._uuid) || asId(cur._id);
+                if (s) {
+                    return s;
+                }
+            }
+        }
+
+        for (const c of [ed.currentSceneUuid, ed.openedSceneUuid, ed.curSceneUuid]) {
+            const s = asId(c);
+            if (s) {
+                return s;
+            }
+        }
+        return '';
+    }
+
     private async buildSceneTreeRoot(opts?: { includeComponents?: boolean }): Promise<any> {
-        const info = await this.callScene('queryCurrentSceneInfo');
-        const children = await this.callScene('queryNodeTree', opts);
+        let info: any = null;
+        let children: any[] = [];
+        try {
+            info = await this.callScene('queryCurrentSceneInfo');
+        } catch {
+            info = null;
+        }
+        try {
+            const rawChildren = await this.callScene('queryNodeTree', opts);
+            children = Array.isArray(rawChildren) ? rawChildren : [];
+        } catch {
+            children = [];
+        }
+
+        let uuid = typeof info?.uuid === 'string' && info.uuid.length > 0 ? info.uuid : '';
+        const name =
+            typeof info?.name === 'string' && info.name.length > 0 ? info.name : 'Current Scene';
+        if (!uuid) {
+            uuid = this.readCurrentSceneAssetUuidFromMain();
+        }
         return {
-            uuid: info.uuid,
-            name: info.name,
+            uuid,
+            name,
             active: true,
             type: 'cc.Scene',
-            children: Array.isArray(children) ? children : [],
+            children,
         };
     }
 
@@ -279,7 +435,7 @@ export class EditorAdapter2x implements IEditorAdapter {
                 if (typeof id === 'string' && !id.startsWith('db://')) {
                     url = await this.callAssetDb('queryUrlByUuid', id);
                 }
-                await this.sendToMainIpc('scene:open-by-url', url);
+                await this.openSceneByDbUrl(url);
                 return undefined;
             }
             case 'save-scene':
@@ -522,7 +678,7 @@ export class EditorAdapter2x implements IEditorAdapter {
             if (typeof assetPathOrUuid === 'string' && !assetPathOrUuid.startsWith('db://')) {
                 url = await this.callAssetDb('queryUrlByUuid', assetPathOrUuid);
             }
-            await this.sendToMainIpc('scene:open-by-url', url);
+            await this.openSceneByDbUrl(url);
             return { success: true, message: `Scene opened: ${assetPathOrUuid}` };
         } catch (e) {
             return toolErr(e);

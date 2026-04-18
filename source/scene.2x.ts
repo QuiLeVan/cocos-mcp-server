@@ -1,9 +1,11 @@
 /**
- * Cocos Creator 2.4.x engine scene script — runs in the preview/runtime process.
+ * Cocos Creator 2.4.x engine scene script — runs in the scene panel process.
  * Registered via package.json `scene-script` (2.x manifest) → `dist-2x/scene.2x.js`.
  *
- * Methods are invoked as: `Editor.Scene.callSceneScript('<pkg>', '<name>', [arg1, …])`
- * → `methods.<name>(event, arg1, …)` where `event` is the IPC event object.
+ * In 2.4.x, scene-script message handlers are exported at the TOP LEVEL of
+ * `module.exports` (not nested under `methods` like 3.x / main.js). Cocos
+ * registers each top-level function as an IPC handler named `<pkg>:<key>`;
+ * `Editor.Scene.callSceneScript('<pkg>', '<name>', [args])` invokes it.
  *
  * @see .ai-docs/tasks/cocos-2x-support/task4-2x-scene-script.md
  */
@@ -53,8 +55,12 @@ function rebuildUuidIndex(): void {
         return;
     }
     walk(scene, (n: any) => {
-        if (n && n.uuid) {
-            uuidMap.set(n.uuid, n);
+        if (!n) {
+            return;
+        }
+        const id = resolveEditorNodeUuid(n);
+        if (id) {
+            uuidMap.set(id, n);
         }
     });
     mapDirty = false;
@@ -68,7 +74,41 @@ function getNodeByUuid(uuid: string): any | undefined {
 }
 
 function getActiveScene(): any | null {
-    return engine.director.getScene();
+    const d: any = engine.director;
+    if (!d) {
+        return null;
+    }
+    const s = typeof d.getScene === 'function' ? d.getScene() : null;
+    if (s) {
+        return s;
+    }
+    // Editor / paused states: some 2.x builds keep the loaded scene on `_scene`.
+    const alt = d._scene;
+    return alt || null;
+}
+
+/**
+ * In Creator 2.x scene-script / editor runtime, the scene root sometimes has
+ * `_id` / `_uuid` populated from deserialization before the public `uuid`
+ * getter is filled — `scene_get_current_scene` then sees an empty uuid and
+ * reports "No scene data available".
+ */
+function resolveEditorNodeUuid(node: any): string {
+    if (!node) {
+        return '';
+    }
+    const u = node.uuid;
+    if (typeof u === 'string' && u.length > 0) {
+        return u;
+    }
+    const alt = node._uuid ?? node._id;
+    if (typeof alt === 'string' && alt.length > 0) {
+        return alt;
+    }
+    if (typeof alt === 'number' && Number.isFinite(alt)) {
+        return String(alt);
+    }
+    return '';
 }
 
 function resolveComponentClass(componentType: string): any | null {
@@ -190,9 +230,47 @@ function describeComponent(comp: any): { type: string; enabled: boolean; name?: 
     };
 }
 
+/** Normalizes args from `execute-scene-script` / `callSceneScript` (array or boolean). */
+function parseIncludeComponents(packed: any): boolean {
+    if (typeof packed === 'boolean') {
+        return packed;
+    }
+    if (Array.isArray(packed)) {
+        const head = packed[0];
+        if (typeof head === 'boolean') {
+            return head;
+        }
+        if (head && typeof head === 'object' && 'includeComponents' in head) {
+            return !!(head as any).includeComponents;
+        }
+    }
+    if (packed && typeof packed === 'object' && 'includeComponents' in packed) {
+        return !!(packed as any).includeComponents;
+    }
+    return false;
+}
+
+/** Shapes `collectNodeTree` output into the hierarchy format `scene-tools.buildHierarchy` expects. */
+function mapCollectToHierarchy(entry: any, includeComponents: boolean): any {
+    const nodeInfo: any = {
+        uuid: entry.uuid,
+        name: entry.name,
+        type: 'cc.Node',
+        active: entry.active,
+        children: (entry.children || []).map((c: any) => mapCollectToHierarchy(c, includeComponents)),
+    };
+    if (includeComponents && entry.components && entry.components.length) {
+        nodeInfo.__comps__ = entry.components.map((c: any) => ({
+            __type__: c.type || 'Unknown',
+            enabled: c.enabled !== false,
+        }));
+    }
+    return nodeInfo;
+}
+
 function collectNodeTree(node: any, includeComponents: boolean): any {
     const entry: any = {
-        uuid: node.uuid,
+        uuid: resolveEditorNodeUuid(node),
         name: node.name,
         active: node.active,
         children: [],
@@ -214,7 +292,7 @@ function collectNodeTree(node: any, includeComponents: boolean): any {
 function buildNodeInfoPayload(node: any): any {
     const comps: any[] = node._components || node.components || [];
     return {
-        uuid: node.uuid,
+        uuid: resolveEditorNodeUuid(node),
         name: node.name,
         active: node.active,
         x: node.x,
@@ -228,7 +306,7 @@ function buildNodeInfoPayload(node: any): any {
         anchorY: node.anchorY,
         opacity: node.opacity,
         zIndex: node.zIndex,
-        parent: node.parent ? node.parent.uuid : null,
+        parent: node.parent ? resolveEditorNodeUuid(node.parent) || null : null,
         color: node.color
             ? { r: node.color.r, g: node.color.g, b: node.color.b, a: node.color.a }
             : undefined,
@@ -282,6 +360,33 @@ const methods: Record<string, (...args: any[]) => any> = {
         }
     },
 
+    /**
+     * Used by `scene-tools` fallback for `scene_get_scene_hierarchy` (must match IPC name
+     * `cocos-mcp-server:getSceneHierarchy` on 2.x).
+     */
+    getSceneHierarchy(_event: any, packed?: any) {
+        try {
+            const includeComponents = parseIncludeComponents(packed);
+            const scene = getActiveScene();
+            if (!scene) {
+                return { success: false, error: 'No active scene' };
+            }
+            const childCollected = (scene.children || []).map((c: any) =>
+                collectNodeTree(c, includeComponents),
+            );
+            const data = {
+                uuid: resolveEditorNodeUuid(scene),
+                name: scene.name,
+                type: 'cc.Scene',
+                active: scene.active !== false,
+                children: childCollected.map((c: any) => mapCollectToHierarchy(c, includeComponents)),
+            };
+            return { success: true, data };
+        } catch (error: any) {
+            return { success: false, error: error.message || String(error) };
+        }
+    },
+
     getNodeInfo(_event: any, args?: { uuid?: string } | string) {
         try {
             const uuid = typeof args === 'string' ? args : args && args.uuid;
@@ -309,10 +414,53 @@ const methods: Record<string, (...args: any[]) => any> = {
                 success: true,
                 data: {
                     name: scene.name,
-                    uuid: scene.uuid,
+                    uuid: resolveEditorNodeUuid(scene),
                     rootNodeCount: roots.length,
                 },
             };
+        } catch (error: any) {
+            return { success: false, error: error.message || String(error) };
+        }
+    },
+
+    /**
+     * Open a `.fire` scene from its asset UUID using the editor scene runtime.
+     * More reliable on 2.4.x than `Editor.Ipc.sendToMain('scene:open-by-url', …)`, which
+     * often never invokes the IPC callback (MCP client times out).
+     */
+    loadSceneByUuid(_event: any, packed?: any) {
+        try {
+            const first = Array.isArray(packed) ? packed[0] : packed;
+            const uuid =
+                typeof first === 'string'
+                    ? first
+                    : first && typeof first === 'object' && typeof (first as any).uuid === 'string'
+                      ? (first as any).uuid
+                      : '';
+            if (!uuid) {
+                return { success: false, error: 'loadSceneByUuid: uuid is required' };
+            }
+            const g: any = typeof globalThis !== 'undefined' ? (globalThis as any) : {};
+            const sceneCtl = g._Scene;
+            if (!sceneCtl || typeof sceneCtl.loadSceneByUuid !== 'function') {
+                return {
+                    success: false,
+                    error: 'loadSceneByUuid: _Scene.loadSceneByUuid is not available in this context',
+                };
+            }
+            return new Promise((resolve) => {
+                sceneCtl.loadSceneByUuid(uuid, (err: any) => {
+                    if (err) {
+                        resolve({
+                            success: false,
+                            error: `loadSceneByUuid failed: ${err.message || String(err)}`,
+                        });
+                    } else {
+                        invalidateIndex();
+                        resolve({ success: true, message: 'Scene loaded', data: { uuid } });
+                    }
+                });
+            });
         } catch (error: any) {
             return { success: false, error: error.message || String(error) };
         }
@@ -714,4 +862,4 @@ const methods: Record<string, (...args: any[]) => any> = {
     },
 };
 
-module.exports = { methods };
+module.exports = methods;

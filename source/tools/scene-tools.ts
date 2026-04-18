@@ -1,5 +1,9 @@
+import * as fs from 'fs';
+import * as path from 'path';
 import { ToolDefinition, ToolResponse, ToolExecutor, SceneInfo } from '../types';
 import { IEditorAdapter } from '../adapters/editor-adapter';
+import { ENGINE_MAJOR } from '../engine-version';
+import { buildNew2xFireSceneJson } from './scene-template-2x';
 
 export class SceneTools implements ToolExecutor {
     constructor(private readonly adapter: IEditorAdapter) {}
@@ -56,7 +60,8 @@ export class SceneTools implements ToolExecutor {
                         },
                         savePath: {
                             type: 'string',
-                            description: 'Path to save the scene (e.g., db://assets/scenes/NewScene.scene)'
+                            description:
+                                'Full db:// path to the scene file, or a folder under db://assets/… . On Creator 2.x use the .fire extension (e.g. db://assets/scenes/New.fire). On 3.x use .scene.',
                         }
                     },
                     required: ['sceneName', 'savePath']
@@ -124,19 +129,55 @@ export class SceneTools implements ToolExecutor {
         }
     }
 
+    /** Normalizes `query-node-tree` payloads (raw tree vs `{ data }` vs ToolResponse). */
+    private pickSceneTreeRoot(raw: any): any | null {
+        if (!raw) {
+            return null;
+        }
+        if (raw.uuid) {
+            return raw;
+        }
+        if (raw.data && raw.data.uuid) {
+            return raw.data;
+        }
+        return null;
+    }
+
+    private ensureParentDirForDbAsset(projectRoot: string, dbUrl: string): void {
+        if (!projectRoot || typeof dbUrl !== 'string' || !dbUrl.startsWith('db://assets/')) {
+            return;
+        }
+        const rel = dbUrl.slice('db://assets/'.length);
+        const absFile = path.join(projectRoot, 'assets', rel);
+        fs.mkdirSync(path.dirname(absFile), { recursive: true });
+    }
+
+    /** If `savePath` is a folder, append `sceneName` + engine default extension. */
+    private resolveSceneSaveDbUrl(savePath: string, sceneName: string): string {
+        const t = savePath.trim();
+        const lower = t.toLowerCase();
+        const ext = ENGINE_MAJOR === 2 ? '.fire' : '.scene';
+        if (lower.endsWith('.fire') || lower.endsWith('.scene')) {
+            return t;
+        }
+        const base = t.replace(/\/+$/, '');
+        return `${base}/${sceneName}${ext}`;
+    }
+
     private async getCurrentScene(): Promise<ToolResponse> {
         return new Promise((resolve) => {
             // query-node-tree （）
             this.adapter.sendRequest('scene', 'query-node-tree').then((tree: any) => {
-                if (tree && tree.uuid) {
+                const root = this.pickSceneTreeRoot(tree);
+                if (root && root.uuid) {
                     resolve({
                         success: true,
                         data: {
-                            name: tree.name || 'Current Scene',
-                            uuid: tree.uuid,
-                            type: tree.type || 'cc.Scene',
-                            active: tree.active !== undefined ? tree.active : true,
-                            nodeCount: tree.children ? tree.children.length : 0
+                            name: root.name || 'Current Scene',
+                            uuid: root.uuid,
+                            type: root.type || 'cc.Scene',
+                            active: root.active !== undefined ? root.active : true,
+                            nodeCount: root.children ? root.children.length : 0
                         }
                     });
                 } else {
@@ -146,12 +187,27 @@ export class SceneTools implements ToolExecutor {
                 // Fallback: use scene script
                 const options = {
                     name: 'cocos-mcp-server',
-                    method: 'getCurrentSceneInfo',
+                    method: 'queryCurrentSceneInfo',
                     args: []
                 };
                 
-                this.adapter.sendRequest('scene', 'execute-scene-script', options).then((result: any) => {
-                    resolve(result);
+                this.adapter.sendRequest('scene', 'execute-scene-script', options).then((raw: any) => {
+                    const info = raw && raw.uuid ? raw : raw && raw.data && raw.data.uuid ? raw.data : null;
+                    if (info && info.uuid) {
+                        resolve({
+                            success: true,
+                            data: {
+                                name: info.name || 'Current Scene',
+                                uuid: info.uuid,
+                                type: 'cc.Scene',
+                                active: true,
+                                nodeCount:
+                                    typeof info.rootNodeCount === 'number' ? info.rootNodeCount : 0,
+                            },
+                        });
+                    } else {
+                        resolve({ success: false, error: 'No scene data available' });
+                    }
                 }).catch((err2: Error) => {
                     resolve({ success: false, error: `Direct API failed: ${err.message}, Scene script failed: ${err2.message}` });
                 });
@@ -160,21 +216,34 @@ export class SceneTools implements ToolExecutor {
     }
 
     private async getSceneList(): Promise<ToolResponse> {
-        return new Promise((resolve) => {
-            // Note: query-assets API corrected with proper parameters
-            this.adapter.sendRequest('asset-db', 'query-assets', {
-                pattern: 'db://assets/**/*.scene'
-            }).then((results: any[]) => {
-                const scenes: SceneInfo[] = results.map(asset => ({
-                    name: asset.name,
-                    path: asset.url,
-                    uuid: asset.uuid
-                }));
-                resolve({ success: true, data: scenes });
-            }).catch((err: Error) => {
-                resolve({ success: false, error: err.message });
-            });
-        });
+        const patterns =
+            ENGINE_MAJOR === 2
+                ? ['db://assets/**/*.fire', 'db://assets/**/*.scene']
+                : ['db://assets/**/*.scene'];
+        try {
+            const seen = new Set<string>();
+            const scenes: SceneInfo[] = [];
+            for (const pattern of patterns) {
+                const results: any[] = await this.adapter.sendRequest('asset-db', 'query-assets', { pattern });
+                if (!Array.isArray(results)) {
+                    continue;
+                }
+                for (const asset of results) {
+                    const key = asset.uuid || asset.url;
+                    if (key && !seen.has(key)) {
+                        seen.add(key);
+                        scenes.push({
+                            name: asset.name,
+                            path: asset.url,
+                            uuid: asset.uuid,
+                        });
+                    }
+                }
+            }
+            return { success: true, data: scenes };
+        } catch (err: any) {
+            return { success: false, error: err instanceof Error ? err.message : String(err) };
+        }
     }
 
     private async openScene(scenePath: string): Promise<ToolResponse> {
@@ -207,11 +276,13 @@ export class SceneTools implements ToolExecutor {
 
     private async createScene(sceneName: string, savePath: string): Promise<ToolResponse> {
         return new Promise((resolve) => {
-            // .scene
-            const fullPath = savePath.endsWith('.scene') ? savePath : `${savePath}/${sceneName}.scene`;
-            
-            // Cocos Creator 3.8
-            const sceneContent = JSON.stringify([
+            const fullPath = this.resolveSceneSaveDbUrl(savePath, sceneName);
+            this.ensureParentDirForDbAsset(this.adapter.projectPath, fullPath);
+
+            const sceneContent =
+                ENGINE_MAJOR === 2
+                    ? buildNew2xFireSceneJson(sceneName)
+                    : JSON.stringify([
                 {
                     "__type__": "cc.SceneAsset",
                     "_name": sceneName,
@@ -365,7 +436,7 @@ export class SceneTools implements ToolExecutor {
                     "_depth": 8
                 }
             ], null, 2);
-            
+
             this.adapter.sendRequest('asset-db', 'create-asset', fullPath, sceneContent).then((result: any) => {
                 // Verify scene creation by checking if it exists
                 this.getSceneList().then((sceneList) => {
@@ -402,8 +473,9 @@ export class SceneTools implements ToolExecutor {
         return new Promise((resolve) => {
             // Editor API
             this.adapter.sendRequest('scene', 'query-node-tree').then((tree: any) => {
-                if (tree) {
-                    const hierarchy = this.buildHierarchy(tree, includeComponents);
+                const root = this.pickSceneTreeRoot(tree) || tree;
+                if (root && root.uuid) {
+                    const hierarchy = this.buildHierarchy(root, includeComponents);
                     resolve({
                         success: true,
                         data: hierarchy
@@ -420,7 +492,18 @@ export class SceneTools implements ToolExecutor {
                 };
                 
                 this.adapter.sendRequest('scene', 'execute-scene-script', options).then((result: any) => {
-                    resolve(result);
+                    if (result && typeof result === 'object' && 'success' in result) {
+                        resolve(result as ToolResponse);
+                        return;
+                    }
+                    if (result && result.uuid) {
+                        resolve({
+                            success: true,
+                            data: this.buildHierarchy(result, includeComponents),
+                        });
+                        return;
+                    }
+                    resolve({ success: false, error: 'No scene hierarchy available' });
                 }).catch((err2: Error) => {
                     resolve({ success: false, error: `Direct API failed: ${err.message}, Scene script failed: ${err2.message}` });
                 });

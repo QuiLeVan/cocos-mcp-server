@@ -261,7 +261,8 @@ export class MCPServer {
                 case 'tools/call':
                     const { name, arguments: args } = params;
                     const toolResult = await this.executeToolCall(name, args);
-                    result = { content: [{ type: 'text', text: JSON.stringify(toolResult) }] };
+                    const text = JSON.stringify(toolResult ?? null) ?? 'null';
+                    result = { content: [{ type: 'text', text }] };
                     break;
                 case 'initialize':
                     // MCP initialization

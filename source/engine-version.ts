@@ -19,6 +19,19 @@ export function detectEngineMajor(): EngineMajor {
         return 3;
     }
 
+    const version: string =
+        (typeof editor.App?.version === 'string' ? editor.App.version : '') ||
+        (typeof editor.versions?.editor === 'string' ? editor.versions.editor : '');
+
+    // Prefer explicit editor semver — Creator 2.4.x may also define `Editor.Project.path`
+    // (deprecation bridge), which would incorrectly classify 2.x as 3 if checked first.
+    if (version.startsWith('2.')) {
+        return 2;
+    }
+    if (version.startsWith('3.')) {
+        return 3;
+    }
+
     if (typeof editor.Project?.path === 'string') {
         return 3;
     }
@@ -26,11 +39,7 @@ export function detectEngineMajor(): EngineMajor {
         return 2;
     }
 
-    const version: string =
-        (typeof editor.App?.version === 'string' ? editor.App.version : '') ||
-        (typeof editor.versions?.editor === 'string' ? editor.versions.editor : '');
-
-    return version.startsWith('2.') ? 2 : 3;
+    return 3;
 }
 
 // Module-level constant so downstream code can `import { ENGINE_MAJOR }`
