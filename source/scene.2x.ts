@@ -599,6 +599,56 @@ const methods: Record<string, (...args: any[]) => any> = {
         }
     },
 
+    instantiatePrefab(
+        _event: any,
+        args?: { prefabUrl?: string; parentUuid?: string; position?: { x?: number; y?: number; z?: number } },
+    ) {
+        try {
+            const scene = getActiveScene();
+            if (!scene) {
+                return { success: false, error: 'No active scene' };
+            }
+            const url = args && args.prefabUrl;
+            if (!url || typeof url !== 'string') {
+                return { success: false, error: 'prefabUrl is required (db://… to the .prefab asset)' };
+            }
+            const Prefab = engine.Prefab;
+            let prefabAsset: any = null;
+            if (engine.loader && typeof engine.loader.getRes === 'function') {
+                prefabAsset = engine.loader.getRes(url, Prefab);
+            }
+            if (!prefabAsset) {
+                return {
+                    success: false,
+                    error:
+                        'Prefab is not in loader cache — open the scene in editor preview or ensure the asset URL is loadable (db://…)',
+                };
+            }
+            const node = engine.instantiate(prefabAsset);
+            let parent: any = scene;
+            if (args && args.parentUuid) {
+                const p = getNodeByUuid(args.parentUuid);
+                if (p) {
+                    parent = p;
+                }
+            }
+            parent.addChild(node);
+            if (args && args.position) {
+                const x = Number(args.position.x) || 0;
+                const y = Number(args.position.y) || 0;
+                node.setPosition(x, y);
+            }
+            invalidateIndex();
+            return {
+                success: true,
+                message: 'Prefab instantiated',
+                data: { uuid: node.uuid, name: node.name },
+            };
+        } catch (error: any) {
+            return { success: false, error: error.message || String(error) };
+        }
+    },
+
     getComponentProperties(_event: any, args?: { nodeUuid?: string; componentType?: string }) {
         try {
             if (!args || !args.nodeUuid || !args.componentType) {

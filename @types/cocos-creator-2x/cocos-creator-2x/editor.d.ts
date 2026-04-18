@@ -38,6 +38,7 @@ declare namespace Editor {
 
     namespace Ipc {
         function on(channel: string, handler: (...args: any[]) => void): void;
+        function removeListener(channel: string, handler: (...args: any[]) => void): void;
         /** Last argument may be a Node-style `cb(err, ...results)`. */
         function sendToPackage(pkg: string, method: string, ...args: any[]): void;
         /** Last argument may be a Node-style `cb(err, ...results)`. */

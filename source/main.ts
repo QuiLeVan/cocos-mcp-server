@@ -4,10 +4,21 @@ import { MCPServerSettings } from './types';
 import { ToolManager } from './tools/tool-manager';
 import { IEditorAdapter } from './adapters/editor-adapter';
 import { EditorAdapter3x } from './adapters/editor-adapter-3x';
+import { detectEngineMajor } from './engine-version';
 
 let mcpServer: MCPServer | null = null;
 let toolManager: ToolManager;
 let editorAdapter: IEditorAdapter;
+
+function createEditorAdapter(): IEditorAdapter {
+    if (detectEngineMajor() === 2) {
+        // Emitted only in the 2.x build (`dist-2x/`). The 3.x bundle never executes this branch.
+        // eslint-disable-next-line @typescript-eslint/no-require-imports
+        const mod = require('./adapters/editor-adapter-2x');
+        return new mod.EditorAdapter2x() as IEditorAdapter;
+    }
+    return new EditorAdapter3x();
+}
 
 /**
  * @en Registration method for the main process of Extension
@@ -227,7 +238,7 @@ export const methods: { [key: string]: (...any: any) => any } = {
 export function load() {
     console.log('Cocos MCP Server extension loaded');
 
-    editorAdapter = new EditorAdapter3x();
+    editorAdapter = createEditorAdapter();
 
     // Initialize tool manager
     toolManager = new ToolManager(editorAdapter);

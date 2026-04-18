@@ -1,11 +1,6 @@
 import { ToolResponse } from '../types';
-import {
-    IEditorAdapter,
-    CreateNodeArgs,
-    BroadcastDisposer,
-    BroadcastHandler,
-    EngineUnsupportedError,
-} from './editor-adapter';
+import { IEditorAdapter, CreateNodeArgs, BroadcastDisposer, BroadcastHandler } from './editor-adapter';
+import { EngineUnsupportedError } from '../errors';
 
 export class EditorAdapter3x implements IEditorAdapter {
     public readonly engineMajor = 3 as const;

@@ -1,5 +1,7 @@
 import { ToolResponse } from '../types';
 
+export { EngineUnsupportedError } from '../errors';
+
 export interface CreateNodeArgs {
     name?: string;
     type?: string;
@@ -65,17 +67,4 @@ export interface IEditorAdapter {
 
     // Sentinel used by the 2.x adapter for engine-specific features
     throwUnsupported(feature: string): never;
-}
-
-export class EngineUnsupportedError extends Error {
-    public readonly code = 'unsupported_on_engine';
-    public readonly feature: string;
-    public readonly engineMajor: 2 | 3;
-
-    constructor(feature: string, engineMajor: 2 | 3) {
-        super(`Feature '${feature}' is not supported on Cocos Creator ${engineMajor}.x`);
-        this.name = 'EngineUnsupportedError';
-        this.feature = feature;
-        this.engineMajor = engineMajor;
-    }
 }
