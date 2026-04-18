@@ -20,10 +20,16 @@ const DEFAULT_TOOL_MANAGER_SETTINGS: ToolManagerSettings = {
 function getProjectRoot(): string {
     const editor = Editor as any;
     if (detectEngineMajor() === 2) {
+        // Prefer `Editor.Project.path` on 2.4.13 (projectInfo.path is deprecated
+        // and logs a warning on every access). Fall back to projectInfo.path for
+        // older 2.x versions that predate Editor.Project.
+        if (typeof editor.Project?.path === 'string') {
+            return editor.Project.path as string;
+        }
         if (typeof editor.projectInfo?.path === 'string') {
             return editor.projectInfo.path as string;
         }
-        throw new Error('[MCP settings] 2.x host requires Editor.projectInfo.path');
+        throw new Error('[MCP settings] 2.x host requires Editor.Project.path or Editor.projectInfo.path');
     }
     return Editor.Project.path;
 }

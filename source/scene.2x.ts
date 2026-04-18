@@ -8,10 +8,27 @@
  * @see .ai-docs/tasks/cocos-2x-support/task4-2x-scene-script.md
  */
 
-/* global Editor */
+/* global Editor, cc */
 
-/** Engine module (`require('cc')`) — not named `cc` to avoid clashing with the `cc` global namespace in typings. */
-const engine = require('cc') as any;
+/**
+ * Engine global. In the 2.x scene context `cc` is a runtime global, not a
+ * requireable Node module — `require('cc')` fails at load time with
+ * `Cannot find module 'cc'`. Use a Proxy so every property access resolves
+ * `cc` lazily the first time a method is invoked.
+ */
+const engine: any = new Proxy(
+    {},
+    {
+        get(_target, prop) {
+            const g: any = (typeof globalThis !== 'undefined' ? globalThis : undefined) as any;
+            const ccRef = (g && g.cc) || (typeof cc !== 'undefined' ? cc : undefined);
+            if (!ccRef) {
+                throw new Error('Cocos engine global `cc` not available in scene context');
+            }
+            return (ccRef as any)[prop as any];
+        },
+    },
+);
 
 const uuidMap = new Map<string, any>();
 let mapDirty = true;

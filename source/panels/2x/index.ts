@@ -57,11 +57,6 @@ Editor.Panel.extend({
     },
 
     ready(this: any) {
-        this._onServerStatus = (_evt: unknown, payload: ServerStatusPayload) => {
-            this.applyStatus(payload);
-        };
-        Editor.Ipc.on(`${PKG}:server-status-changed`, this._onServerStatus);
-
         this.$btnStart.addEventListener('click', () => this.onStart());
         this.$btnStop.addEventListener('click', () => this.onStop());
         this.$btnApply.addEventListener('click', () => this.onSaveSettings());
@@ -71,14 +66,16 @@ Editor.Panel.extend({
         void this.refreshAll();
     },
 
-    close(this: any) {
-        if (this._onServerStatus) {
-            Editor.Ipc.removeListener(`${PKG}:server-status-changed`, this._onServerStatus);
-            this._onServerStatus = null;
-        }
-    },
+    close(this: any) {},
 
-    messages: {},
+    // 2.x panels receive main-process broadcasts via `messages`, not
+    // `Editor.Ipc.on` (which does not exist in the renderer). The key is
+    // the full IPC channel name (pkg-scoped).
+    messages: {
+        [`${PKG}:server-status-changed`](this: any, _evt: unknown, payload: ServerStatusPayload) {
+            this.applyStatus(payload);
+        },
+    } as Record<string, (this: any, _evt: unknown, ...args: any[]) => void>,
 
     applyStatus(this: any, payload: ServerStatusPayload) {
         const running = !!payload?.running;

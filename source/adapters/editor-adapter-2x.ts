@@ -240,10 +240,31 @@ export class EditorAdapter2x implements IEditorAdapter {
     }
 
     public onBroadcast(event: string, handler: BroadcastHandler): BroadcastDisposer {
-        Editor.Ipc.on(event, handler);
-        return () => {
-            Editor.Ipc.removeListener(event, handler);
-        };
+        // Cocos 2.4.13 main process: `Editor.Ipc` exposes sendToMain/sendToWins
+        // but not `.on` / `.removeListener`. The `Editor` object itself is an
+        // EventEmitter, so register there as the real fallback. Guard both to
+        // avoid crashing extension load if neither surface is available.
+        const ipc: any = (Editor as any).Ipc;
+        if (ipc && typeof ipc.on === 'function') {
+            ipc.on(event, handler);
+            return () => {
+                if (typeof ipc.removeListener === 'function') {
+                    ipc.removeListener(event, handler);
+                }
+            };
+        }
+        const ed: any = Editor as any;
+        if (typeof ed.on === 'function') {
+            ed.on(event, handler);
+            return () => {
+                if (typeof ed.removeListener === 'function') {
+                    ed.removeListener(event, handler);
+                } else if (typeof ed.off === 'function') {
+                    ed.off(event, handler);
+                }
+            };
+        }
+        return () => { /* no-op: no broadcast surface available on this host */ };
     }
 
     private async dispatchSceneRequest(op: string, args: any[]): Promise<any> {
