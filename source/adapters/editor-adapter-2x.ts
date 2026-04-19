@@ -103,9 +103,40 @@ function toNodeDump3xStyle(payload: any): any {
 export class EditorAdapter2x implements IEditorAdapter {
     public readonly engineMajor = 2 as const;
 
+    private cachedSceneRootUuid: string | null = null;
+
+    /**
+     * Synthetic clipboard for `copy-node` / `paste-node` on 2.x — the native
+     * 2.4.x scene IPCs do not expose a stable copy/paste API, so we snapshot
+     * the node info and rebuild on paste by delegating to
+     * `duplicateNodeWithChildren`.
+     */
+    private clipboardNodes: Array<{ uuid: string; info: any }> = [];
+
     public get projectPath(): string {
         const p = (Editor as any).projectInfo?.path;
         return typeof p === 'string' ? p : '';
+    }
+
+    public async getSceneRootUuid(): Promise<string | null> {
+        if (this.cachedSceneRootUuid) {
+            return this.cachedSceneRootUuid;
+        }
+        try {
+            const root = await this.buildSceneTreeRoot();
+            if (root && typeof root.uuid === 'string' && root.uuid.length > 0) {
+                this.cachedSceneRootUuid = root.uuid;
+                return root.uuid;
+            }
+        } catch {
+            /* fall through */
+        }
+        const main = this.readCurrentSceneAssetUuidFromMain();
+        if (main) {
+            this.cachedSceneRootUuid = main;
+            return main;
+        }
+        return null;
     }
 
     // ─── Callback → Promise helpers ────────────────────────────────────────
@@ -219,6 +250,19 @@ export class EditorAdapter2x implements IEditorAdapter {
                 reject(e instanceof Error ? e : new Error(String(e)));
             }
         });
+    }
+
+    /**
+     * Panel IPC without a trailing callback (same pattern as `scene:new-scene` in
+     * Creator 2.4 docs). `scene:stash-and-save` must hit the **scene** panel — using
+     * `sendToMain` or a callback here does not reliably flush the open scene / dirty flag.
+     */
+    private sendToPanelFireAndForget(panel: string, method: string, ...ipcArgs: any[]): void {
+        const ipc: any = (Editor as any).Ipc;
+        if (!ipc || typeof ipc.sendToPanel !== 'function') {
+            throw new Error('Editor.Ipc.sendToPanel is not available');
+        }
+        ipc.sendToPanel(panel, method, ...ipcArgs);
     }
 
     /**
@@ -430,6 +474,74 @@ export class EditorAdapter2x implements IEditorAdapter {
         };
     }
 
+    private async pasteSnapshots(snapshots: Array<{ uuid: string; info: any }>, targetUuid?: string): Promise<string | string[]> {
+        const newUuids: string[] = [];
+        for (const snap of snapshots) {
+            try {
+                const res = await this.callScene('duplicateNodeWithChildren', {
+                    uuid: snap.uuid,
+                    parentUuid: targetUuid,
+                });
+                const newUuid = res && typeof res === 'object' && res.uuid ? res.uuid : String(res);
+                if (newUuid) {
+                    newUuids.push(newUuid);
+                }
+            } catch (e) {
+                throw new Error(`paste-node: ${errMsg(e)}`);
+            }
+        }
+        return newUuids.length === 1 ? newUuids[0] : newUuids;
+    }
+
+    private collectUuidReferences(value: any, acc: string[]): void {
+        if (!value || typeof value !== 'object') {
+            return;
+        }
+        if (typeof (value as any).__uuid__ === 'string' && (value as any).__uuid__.length > 0) {
+            acc.push((value as any).__uuid__);
+            return;
+        }
+        if (Array.isArray(value)) {
+            for (const item of value) {
+                this.collectUuidReferences(item, acc);
+            }
+            return;
+        }
+        for (const k of Object.keys(value)) {
+            this.collectUuidReferences((value as any)[k], acc);
+        }
+    }
+
+    private async scanMissingAssets(): Promise<Array<{ uuid: string }>> {
+        // Ask the scene script for the serialized scene (a best-effort walk
+        // that may not exist yet — fall through to empty if so).
+        let serialized: any = null;
+        try {
+            serialized = await this.callScene('serializeScene');
+        } catch {
+            return [];
+        }
+        const refs: string[] = [];
+        this.collectUuidReferences(serialized, refs);
+        const missing: Array<{ uuid: string }> = [];
+        const seen = new Set<string>();
+        for (const uuid of refs) {
+            if (seen.has(uuid)) {
+                continue;
+            }
+            seen.add(uuid);
+            try {
+                const url = await this.callAssetDb('queryUrlByUuid', uuid);
+                if (!url || typeof url !== 'string') {
+                    missing.push({ uuid });
+                }
+            } catch {
+                missing.push({ uuid });
+            }
+        }
+        return missing;
+    }
+
     // ─── Generic transport ─────────────────────────────────────────────────
 
     public sendRequest<T = any>(module: string, op: string, ...args: any[]): Promise<T> {
@@ -508,14 +620,78 @@ export class EditorAdapter2x implements IEditorAdapter {
                     url = await this.callAssetDb('queryUrlByUuid', id);
                 }
                 await this.openSceneByDbUrl(url);
+                this.cachedSceneRootUuid = null;
                 return undefined;
             }
-            case 'save-scene':
-                await this.sendToMainIpc('scene:stash-and-save');
+            case 'save-scene': {
+                // 2.4 IPC reference: scene panel handles save (like `scene:new-scene`).
+                this.sendToPanelFireAndForget('scene', 'scene:stash-and-save');
                 return undefined;
+            }
             case 'save-as-scene':
+                throw engineUnsupported('scene.save_scene_as', 2);
             case 'close-scene':
-                throw new Error(`unsupported_scene_op_2x: scene/${op}`);
+                throw engineUnsupported('scene.close_scene', 2);
+            case 'query-hierarchy': {
+                // Back debug_get_node_tree + validation callers. Delegate to
+                // the scene-tree builder — same payload the tool layer already
+                // accepts.
+                return this.buildSceneTreeRoot({ includeComponents: true });
+            }
+            case 'check-missing-assets': {
+                // Implemented by serializing the scene via a new scene-script
+                // handler and walking `__uuid__` references against asset-db.
+                const missing = await this.scanMissingAssets();
+                return { missing };
+            }
+            case 'copy-node': {
+                const input = args[0];
+                const uuids: string[] = Array.isArray(input)
+                    ? input.map((u) => String(u))
+                    : typeof input === 'string'
+                      ? [input]
+                      : input && Array.isArray(input.uuids)
+                        ? input.uuids.map((u: unknown) => String(u))
+                        : [];
+                if (uuids.length === 0) {
+                    throw new Error('copy-node: no uuids provided');
+                }
+                const snapshots: any[] = [];
+                for (const u of uuids) {
+                    try {
+                        const info = await this.callScene('getNodeInfo', { uuid: u });
+                        snapshots.push({ uuid: u, info });
+                    } catch (e) {
+                        throw new Error(`copy-node: ${errMsg(e)}`);
+                    }
+                }
+                this.clipboardNodes = snapshots;
+                return uuids.length === 1 ? uuids[0] : uuids;
+            }
+            case 'paste-node': {
+                const payload = args[0] || {};
+                const targetUuid = payload.target || payload.parent;
+                const snapshots = this.clipboardNodes;
+                if (!snapshots || snapshots.length === 0) {
+                    // If caller passed explicit uuids, fall back to duplicating those.
+                    const explicit: string[] = Array.isArray(payload.uuids)
+                        ? payload.uuids
+                        : payload.uuids
+                          ? [payload.uuids]
+                          : [];
+                    if (explicit.length === 0) {
+                        throw new Error('paste-node: clipboard is empty');
+                    }
+                    const explicitSnapshots = await Promise.all(
+                        explicit.map(async (u) => ({
+                            uuid: u,
+                            info: await this.callScene('getNodeInfo', { uuid: u }),
+                        })),
+                    );
+                    return this.pasteSnapshots(explicitSnapshots, targetUuid);
+                }
+                return this.pasteSnapshots(snapshots, targetUuid);
+            }
             case 'create-node': {
                 const opts = args[0] || {};
                 if (opts.assetUuid || opts.assetPath) {
@@ -548,6 +724,11 @@ export class EditorAdapter2x implements IEditorAdapter {
             }
             case 'query-node': {
                 const uuid = typeof args[0] === 'string' ? args[0] : args[0]?.uuid;
+                const sceneRoot = await this.getSceneRootUuid();
+                if (uuid && sceneRoot && uuid === sceneRoot) {
+                    const raw = await this.callScene('getSceneRootInfo');
+                    return toNodeDump3xStyle(raw);
+                }
                 const raw = await this.callScene('getNodeInfo', { uuid });
                 return toNodeDump3xStyle(raw);
             }
@@ -598,11 +779,24 @@ export class EditorAdapter2x implements IEditorAdapter {
             case 'execute-scene-script': {
                 const payload = args[0] || {};
                 if (payload.name && payload.name !== EXTENSION_PKG) {
-                    throw new Error(`execute_scene_script_foreign_package_2x: ${payload.name}`);
+                    throw engineUnsupported(`debug.execute_script.foreign_package:${payload.name}`, 2);
                 }
                 const m = payload.method as string;
                 const a = Array.isArray(payload.args) ? payload.args : [];
                 return this.callScene(m, ...a);
+            }
+            case 'duplicate-node': {
+                const input = args[0];
+                const uuid = typeof input === 'string'
+                    ? input
+                    : input && typeof input === 'object' && input.uuid
+                      ? input.uuid
+                      : '';
+                if (!uuid) {
+                    throw new Error('duplicate-node: uuid is required');
+                }
+                const res = await this.callScene('duplicateNodeWithChildren', { uuid });
+                return res;
             }
             case 'snapshot':
                 return this.callScene('snapshot');
@@ -611,8 +805,6 @@ export class EditorAdapter2x implements IEditorAdapter {
             case 'reset-property':
             case 'move-array-element':
             case 'remove-array-element':
-            case 'copy-node':
-            case 'paste-node':
             case 'cut-node':
             case 'reset-node':
             case 'reset-component':
@@ -629,7 +821,7 @@ export class EditorAdapter2x implements IEditorAdapter {
             case 'query-component-has-script':
             case 'query-nodes-by-asset-uuid':
             case 'load-asset':
-                throw new Error(`unsupported_scene_op_2x: scene/${op}`);
+                throw engineUnsupported(`scene.${op}`, 2);
             default:
                 throw new Error(`unknown_scene_op_2x: scene/${op}`);
         }
@@ -759,8 +951,8 @@ export class EditorAdapter2x implements IEditorAdapter {
 
     public async saveScene(): Promise<ToolResponse> {
         try {
-            await this.sendToMainIpc('scene:stash-and-save');
-            return { success: true, message: 'Scene saved successfully' };
+            this.sendToPanelFireAndForget('scene', 'scene:stash-and-save');
+            return { success: true, message: 'Scene save requested (scene panel stash-and-save)' };
         } catch (e) {
             return toolErr(e);
         }

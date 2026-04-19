@@ -88,6 +88,38 @@ function getActiveScene(): any | null {
 }
 
 /**
+ * Direct children of the active runtime `cc.Scene` for hierarchy tools.
+ *
+ * Usually these are `scene.children` (Canvas, managers, etc.). In Creator 2.x
+ * editor scene-script, `children` can be empty transiently while the Canvas
+ * shown in the Hierarchy still resolves via `cc.find('Canvas')` (same pattern
+ * as the engine manual’s scene node tree / `getChildByName` examples).
+ *
+ * @see https://docs.cocos.com/creator/2.4/manual/en/concepts/scene/node-tree.html
+ */
+function runtimeSceneTopLevelNodes(scene: any): any[] {
+    if (!scene) {
+        return [];
+    }
+    const roots: any[] = scene.children || [];
+    if (roots.length > 0) {
+        return roots;
+    }
+    try {
+        const finder = engine.find;
+        if (typeof finder === 'function') {
+            const canvas = finder.call(engine, 'Canvas');
+            if (canvas) {
+                return [canvas];
+            }
+        }
+    } catch {
+        /* ignore */
+    }
+    return roots;
+}
+
+/**
  * In Creator 2.x scene-script / editor runtime, the scene root sometimes has
  * `_id` / `_uuid` populated from deserialization before the public `uuid`
  * getter is filled — `scene_get_current_scene` then sees an empty uuid and
@@ -352,7 +384,7 @@ const methods: Record<string, (...args: any[]) => any> = {
                 return { success: false, error: 'No active scene' };
             }
             const includeComponents = !!(args && args.includeComponents);
-            const roots: any[] = scene.children || [];
+            const roots: any[] = runtimeSceneTopLevelNodes(scene);
             const data = roots.map((c) => collectNodeTree(c, includeComponents));
             return { success: true, data };
         } catch (error: any) {
@@ -371,7 +403,7 @@ const methods: Record<string, (...args: any[]) => any> = {
             if (!scene) {
                 return { success: false, error: 'No active scene' };
             }
-            const childCollected = (scene.children || []).map((c: any) =>
+            const childCollected = runtimeSceneTopLevelNodes(scene).map((c: any) =>
                 collectNodeTree(c, includeComponents),
             );
             const data = {
@@ -403,13 +435,54 @@ const methods: Record<string, (...args: any[]) => any> = {
         }
     },
 
+    /**
+     * Resolve scene-root info (a synthetic `cc.Node`-shaped payload whose uuid
+     * is the scene-asset UUID). Used by node tools that would otherwise fail
+     * because the scene-root UUID is not a `cc.Node._id` that can be resolved
+     * via `cc.engine.getInstanceById`.
+     */
+    getSceneRootInfo(_event?: any) {
+        try {
+            const scene = getActiveScene();
+            if (!scene) {
+                return { success: false, error: 'No active scene' };
+            }
+            const comps: any[] = scene._components || scene.components || [];
+            const payload = {
+                uuid: resolveEditorNodeUuid(scene),
+                name: scene.name || 'Scene',
+                active: scene.active !== false,
+                x: 0,
+                y: 0,
+                scaleX: 1,
+                scaleY: 1,
+                rotation: 0,
+                width: 0,
+                height: 0,
+                anchorX: 0.5,
+                anchorY: 0.5,
+                opacity: 255,
+                zIndex: 0,
+                parent: null,
+                __sceneRoot: true,
+                components: comps.map((c) => ({
+                    ...describeComponent(c),
+                    properties: {},
+                })),
+            };
+            return { success: true, data: payload };
+        } catch (error: any) {
+            return { success: false, error: error.message || String(error) };
+        }
+    },
+
     queryCurrentSceneInfo(_event?: any) {
         try {
             const scene = getActiveScene();
             if (!scene) {
                 return { success: false, error: 'No active scene' };
             }
-            const roots = scene.children || [];
+            const roots = runtimeSceneTopLevelNodes(scene);
             return {
                 success: true,
                 data: {
@@ -845,17 +918,110 @@ const methods: Record<string, (...args: any[]) => any> = {
         return { success: false, error: 'undo_not_available_2x' };
     },
 
+    /**
+     * Duplicate a node (including children) by instantiating it into the same
+     * parent (or a provided one). Backs `node_duplicate_node` / the synthetic
+     * copy+paste path on 2.x.
+     */
+    /**
+     * `eval`-style script execution inside the extension scene-script context.
+     * Used by `debug_execute_script`. Intentionally minimal — runs in the same
+     * VM as the scene handlers, so `cc`, `Editor`, and this file's helpers are
+     * in scope.
+     */
+    evalScript(_event: any, packed?: any) {
+        try {
+            const first = Array.isArray(packed) ? packed[0] : packed;
+            const script = typeof first === 'string' ? first : first && first.script;
+            if (typeof script !== 'string' || script.length === 0) {
+                return { success: false, error: 'script is required' };
+            }
+            // Indirect eval to force script scope (no access to our local vars).
+            const g: any = (typeof globalThis !== 'undefined' ? globalThis : {}) as any;
+            const runner: (code: string) => any = g.eval || eval;
+            const result = runner(script);
+            return { success: true, data: { result: result === undefined ? null : result } };
+        } catch (error: any) {
+            return { success: false, error: error.message || String(error) };
+        }
+    },
+
+    duplicateNodeWithChildren(_event: any, args?: { uuid?: string; parentUuid?: string }) {
+        try {
+            if (!args || !args.uuid) {
+                return { success: false, error: 'uuid is required' };
+            }
+            const node = getNodeByUuid(args.uuid);
+            if (!node) {
+                return { success: false, error: `Node ${args.uuid} not found` };
+            }
+            const scene = getActiveScene();
+            const parent = args.parentUuid ? getNodeByUuid(args.parentUuid) : node.parent || scene;
+            if (!parent) {
+                return { success: false, error: 'Target parent not found' };
+            }
+            const clone = engine.instantiate(node);
+            parent.addChild(clone);
+            invalidateIndex();
+            return {
+                success: true,
+                message: 'Node duplicated',
+                data: { uuid: clone.uuid, name: clone.name },
+            };
+        } catch (error: any) {
+            return { success: false, error: error.message || String(error) };
+        }
+    },
+
+    /**
+     * Return a shallow serialization of the current scene tree — used by
+     * `debug_validate_scene` to walk `__uuid__` references against asset-db.
+     * The payload is intentionally lean: it is a recursive dump of every
+     * enumerable property on every node / component that is not `_`-prefixed
+     * (see `serializeValue`), so `__uuid__` references carry through.
+     */
+    serializeScene(_event?: any) {
+        try {
+            const scene = getActiveScene();
+            if (!scene) {
+                return { success: false, error: 'No active scene' };
+            }
+            const serializeNode = (n: any): any => {
+                const comps: any[] = n._components || n.components || [];
+                return {
+                    uuid: resolveEditorNodeUuid(n),
+                    name: n.name,
+                    active: n.active !== false,
+                    components: comps.map((c) => ({
+                        type: c && c.constructor ? c.constructor.name : 'Unknown',
+                        properties: getComponentPropertiesPayload(c),
+                    })),
+                    children: (n.children || []).map(serializeNode),
+                };
+            };
+            return { success: true, data: serializeNode(scene) };
+        } catch (error: any) {
+            return { success: false, error: error.message || String(error) };
+        }
+    },
+
     saveScene(_event?: any) {
         try {
             const EditorGlobal = typeof Editor !== 'undefined' ? (Editor as any) : null;
-            if (EditorGlobal && EditorGlobal.Ipc && EditorGlobal.Ipc.sendToMain) {
-                EditorGlobal.Ipc.sendToMain('scene:stash-and-save');
-                return { success: true, message: 'saveScene IPC sent (async in editor)' };
+            const Ipc = EditorGlobal && EditorGlobal.Ipc;
+            if (!Ipc) {
+                return { success: false, error: 'Editor.Ipc not available in scene context' };
             }
-            return {
-                success: false,
-                error: 'Editor.Ipc.sendToMain not available from scene context — invoke save from main process',
-            };
+            // Prefer scene panel (same as extension main path); sendToMain does not clear dirty on 2.4.x.
+            if (typeof Ipc.sendToPanel === 'function') {
+                Ipc.sendToPanel('scene', 'scene:stash-and-save');
+                return { success: true, message: 'saveScene: sendToPanel(scene, stash-and-save)' };
+            }
+            if (typeof Ipc.sendToMain === 'function') {
+                Ipc.sendToMain('scene:stash-and-save');
+                return { success: true, message: 'saveScene: sendToMain(stash-and-save) fallback' };
+            }
+            return { success: false, error: 'Editor.Ipc.sendToPanel/sendToMain not available' };
         } catch (error: any) {
             return { success: false, error: error.message || String(error) };
         }

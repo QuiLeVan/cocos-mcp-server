@@ -254,10 +254,13 @@ export class DebugTools implements ToolExecutor {
     }
 
     private async executeScript(script: string): Promise<ToolResponse> {
-        return new Promise((resolve) => {
+        return new Promise((resolve, reject) => {
+            // Target our own package's scene-script context — the previous
+            // `'console'` target tripped the foreign-package guard in the 2.x
+            // adapter and returned `execute_scene_script_foreign_package_2x`.
             this.adapter.sendRequest('scene', 'execute-scene-script', {
-                name: 'console',
-                method: 'eval',
+                name: 'cocos-mcp-server',
+                method: 'evalScript',
                 args: [script]
             }).then((result: any) => {
                 resolve({
@@ -267,7 +270,14 @@ export class DebugTools implements ToolExecutor {
                         message: 'Script executed successfully'
                     }
                 });
-            }).catch((err: Error) => {
+            }).catch((err: any) => {
+                // Expected errors (EngineUnsupportedError on 2.x when the caller
+                // passes `{ name: "console" }` via an override) must bubble so
+                // the REST envelope classifies them correctly.
+                if (err && err.code === 'ENGINE_UNSUPPORTED') {
+                    reject(err);
+                    return;
+                }
                 resolve({ success: false, error: err.message });
             });
         });

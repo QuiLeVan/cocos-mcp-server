@@ -67,4 +67,15 @@ export interface IEditorAdapter {
 
     // Sentinel used by the 2.x adapter for engine-specific features
     throwUnsupported(feature: string): never;
+
+    /**
+     * Returns the current scene-root UUID if one can be resolved without a full
+     * scene query. On 2.x this is the synthetic scene-asset UUID built by
+     * `buildSceneTreeRoot`; on 3.x it is the real scene runtime UUID.
+     * Used by `component-tools` / `node-tools` to short-circuit validation
+     * before falling through to the regular `query-node` path. Returns `null`
+     * if the adapter cannot answer cheaply — callers should fall back to the
+     * regular node-lookup.
+     */
+    getSceneRootUuid(): Promise<string | null>;
 }

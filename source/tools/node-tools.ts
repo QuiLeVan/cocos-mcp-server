@@ -1,6 +1,7 @@
 import { ToolDefinition, ToolResponse, ToolExecutor, NodeInfo } from '../types';
 import { ComponentTools } from './component-tools';
 import { IEditorAdapter } from '../adapters/editor-adapter';
+import { engineUnsupported } from '../errors';
 
 export class NodeTools implements ToolExecutor {
     private readonly componentTools: ComponentTools;
@@ -8,6 +9,28 @@ export class NodeTools implements ToolExecutor {
     constructor(private readonly adapter: IEditorAdapter) {
         this.componentTools = new ComponentTools(adapter);
     }
+
+    /**
+     * Normalizes `scene/query-node-tree` payloads so tree walks see the real root
+     * (`uuid` + `children`), not a `{ success, data }` envelope from a typed helper.
+     * Mirrors `SceneTools.pickSceneTreeRoot` behavior for shared tool code.
+     */
+    private pickNodeTreeRoot(raw: any): any | null {
+        if (!raw || typeof raw !== 'object' || Array.isArray(raw)) {
+            return null;
+        }
+        if (raw.success === true && raw.data && typeof raw.data === 'object' && !Array.isArray(raw.data)) {
+            return this.pickNodeTreeRoot(raw.data);
+        }
+        if (typeof raw.uuid === 'string' && raw.uuid.length > 0) {
+            return raw;
+        }
+        if (raw.data && typeof raw.data === 'object' && typeof raw.data.uuid === 'string' && raw.data.uuid.length > 0) {
+            return raw.data;
+        }
+        return null;
+    }
+
     getTools(): ToolDefinition[] {
         return [
             {
@@ -320,8 +343,23 @@ export class NodeTools implements ToolExecutor {
                 if (!targetParentUuid) {
                     try {
                         const sceneInfo = await this.adapter.sendRequest('scene', 'query-node-tree');
-                        if (sceneInfo && typeof sceneInfo === 'object' && !Array.isArray(sceneInfo) && Object.prototype.hasOwnProperty.call(sceneInfo, 'uuid')) {
-                            targetParentUuid = (sceneInfo as any).uuid;
+                        const root = this.pickNodeTreeRoot(sceneInfo) ?? sceneInfo;
+                        const em = this.adapter.engineMajor;
+                        if (em === 2) {
+                            // 2.x: synthetic tree root uuid is the .fire asset id — not a cc.Node parent.
+                            // Default new nodes under the first runtime child (almost always Canvas).
+                            const firstChild = root?.children?.[0];
+                            if (firstChild && typeof firstChild.uuid === 'string' && firstChild.uuid.length > 0) {
+                                targetParentUuid = firstChild.uuid;
+                                console.log(`No parent specified, using first scene child (2.x): ${targetParentUuid}`);
+                            }
+                        } else if (
+                            root &&
+                            typeof root === 'object' &&
+                            !Array.isArray(root) &&
+                            typeof (root as any).uuid === 'string'
+                        ) {
+                            targetParentUuid = (root as any).uuid;
                             console.log(`No parent specified, using scene root: ${targetParentUuid}`);
                         } else if (Array.isArray(sceneInfo) && sceneInfo.length > 0 && sceneInfo[0].uuid) {
                             targetParentUuid = sceneInfo[0].uuid;
@@ -541,7 +579,8 @@ export class NodeTools implements ToolExecutor {
         return new Promise((resolve) => {
             // Note: 'query-nodes-by-name' API doesn't exist in official documentation
             // Using tree traversal as primary approach
-            this.adapter.sendRequest('scene', 'query-node-tree').then((tree: any) => {
+            this.adapter.sendRequest('scene', 'query-node-tree').then((raw: any) => {
+                const tree = this.pickNodeTreeRoot(raw) ?? raw;
                 const nodes: any[] = [];
                 
                 const searchTree = (node: any, currentPath: string = '') => {
@@ -591,7 +630,8 @@ export class NodeTools implements ToolExecutor {
     private async findNodeByName(name: string): Promise<ToolResponse> {
         return new Promise((resolve) => {
             // Editor API
-            this.adapter.sendRequest('scene', 'query-node-tree').then((tree: any) => {
+            this.adapter.sendRequest('scene', 'query-node-tree').then((raw: any) => {
+                const tree = this.pickNodeTreeRoot(raw) ?? raw;
                 const foundNode = this.searchNodeInTree(tree, name);
                 if (foundNode) {
                     resolve({
@@ -642,7 +682,8 @@ export class NodeTools implements ToolExecutor {
     private async getAllNodes(): Promise<ToolResponse> {
         return new Promise((resolve) => {
             // Walk the entire scene tree returned by the editor
-            this.adapter.sendRequest('scene', 'query-node-tree').then((tree: any) => {
+            this.adapter.sendRequest('scene', 'query-node-tree').then((raw: any) => {
+                const tree = this.pickNodeTreeRoot(raw) ?? raw;
                 const nodes: any[] = [];
                 
                 const traverseTree = (node: any) => {
@@ -752,13 +793,22 @@ export class NodeTools implements ToolExecutor {
     }
 
     private async setNodeTransform(args: any): Promise<ToolResponse> {
-        return new Promise(async (resolve) => {
+        return new Promise(async (resolve, reject) => {
             const { uuid, position, rotation, scale } = args;
             const updatePromises: Promise<any>[] = [];
             const updates: string[] = [];
             const warnings: string[] = [];
-            
+
             try {
+                // Scene-root cannot be transformed (undefined on both engines).
+                try {
+                    const sceneRoot = await this.adapter.getSceneRootUuid();
+                    if (sceneRoot && uuid === sceneRoot) {
+                        reject(engineUnsupported('node.set_node_transform.scene-root', this.adapter.engineMajor));
+                        return;
+                    }
+                } catch { /* fall through — still allow the op to attempt */ }
+
                 // First get node info to determine if it's 2D or 3D
                 const nodeInfoResponse = await this.getNodeInfo(uuid);
                 if (!nodeInfoResponse.success || !nodeInfoResponse.data) {
@@ -1011,6 +1061,30 @@ export class NodeTools implements ToolExecutor {
     private async detectNodeType(uuid: string): Promise<ToolResponse> {
         return new Promise(async (resolve) => {
             try {
+                try {
+                    const sceneRoot = await this.adapter.getSceneRootUuid();
+                    if (sceneRoot && uuid === sceneRoot) {
+                        resolve({
+                            success: true,
+                            data: {
+                                nodeUuid: uuid,
+                                nodeName: 'Scene',
+                                nodeType: 'Scene',
+                                is3D: false,
+                                engine: this.adapter.engineMajor,
+                                detectionReasons: ['UUID matches scene-root — synthetic cc.Scene'],
+                                components: [],
+                                transformConstraints: {
+                                    position: 'scene-root cannot be transformed',
+                                    rotation: 'scene-root cannot be transformed',
+                                    scale: 'scene-root cannot be transformed',
+                                },
+                            },
+                        });
+                        return;
+                    }
+                } catch { /* fall through */ }
+
                 const nodeInfoResponse = await this.getNodeInfo(uuid);
                 if (!nodeInfoResponse.success || !nodeInfoResponse.data) {
                     resolve({ success: false, error: 'Failed to get node information' });

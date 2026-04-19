@@ -1,5 +1,6 @@
 import { ToolDefinition, ToolResponse, ToolExecutor, ComponentInfo } from '../types';
 import { IEditorAdapter } from '../adapters/editor-adapter';
+import { invalidTargetNode } from '../errors';
 
 export class ComponentTools implements ToolExecutor {
     constructor(private readonly adapter: IEditorAdapter) {}
@@ -186,6 +187,22 @@ export class ComponentTools implements ToolExecutor {
     }
 
     async execute(toolName: string, args: any): Promise<ToolResponse> {
+        // Component tools that take `nodeUuid` must reject scene-asset / scene-root
+        // UUIDs up front with the shared `invalid_target_node` contract. The
+        // fallback "node not found / no components data" message was impossible
+        // to distinguish from a genuinely missing UUID.
+        const needsNodeGuard = new Set([
+            'add_component',
+            'remove_component',
+            'get_components',
+            'get_component_info',
+            'set_component_property',
+            'attach_script',
+        ]);
+        if (needsNodeGuard.has(toolName)) {
+            await this.requireCcNodeUuid(args?.nodeUuid, `component.${toolName}`);
+        }
+
         switch (toolName) {
             case 'add_component':
                 return await this.addComponent(args.nodeUuid, args.componentType);
@@ -203,6 +220,46 @@ export class ComponentTools implements ToolExecutor {
                 return await this.getAvailableComponents(args.category);
             default:
                 throw new Error(`Unknown tool: ${toolName}`);
+        }
+    }
+
+    /**
+     * Reject a request whose `nodeUuid` is missing, points at the scene root,
+     * or does not resolve to a `cc.Node`. Throws {@link InvalidTargetNodeError}
+     * which the REST envelope (Task 1) turns into a 200 + structured body.
+     */
+    private async requireCcNodeUuid(nodeUuid: string | undefined, feature: string): Promise<void> {
+        if (!nodeUuid || typeof nodeUuid !== 'string') {
+            throw invalidTargetNode(feature, String(nodeUuid ?? ''), 'nodeUuid-missing-or-invalid');
+        }
+        try {
+            const sceneRoot = await this.adapter.getSceneRootUuid();
+            if (sceneRoot && nodeUuid === sceneRoot) {
+                throw invalidTargetNode(feature, nodeUuid, 'scene-root-uuid-is-not-a-cc-node');
+            }
+        } catch (err) {
+            // Let InvalidTargetNodeError bubble; swallow getSceneRootUuid infra errors.
+            if (err && (err as any).code === 'invalid_target_node') {
+                throw err;
+            }
+        }
+        // Confirm the UUID resolves to a `cc.Node` via `query-node`. If not, surface
+        // `invalid_target_node` rather than the vague fallback.
+        try {
+            const data: any = await this.adapter.sendRequest('scene', 'query-node', nodeUuid);
+            if (!data) {
+                throw invalidTargetNode(feature, nodeUuid, 'node-not-found');
+            }
+            // Scene-root payload is tagged via `__sceneRoot` in the 2.x adapter path.
+            if ((data as any).__sceneRoot === true || (data as any).name?.value === 'Scene') {
+                throw invalidTargetNode(feature, nodeUuid, 'scene-root-uuid-is-not-a-cc-node');
+            }
+        } catch (err) {
+            if (err && (err as any).code === 'invalid_target_node') {
+                throw err;
+            }
+            // Fall through — the tool's own IPC will surface a clearer error if it truly
+            // is a network / editor glitch rather than a UUID-type mismatch.
         }
     }
 

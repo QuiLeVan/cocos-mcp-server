@@ -17,6 +17,13 @@ import { ReferenceImageTools } from './tools/reference-image-tools';
 import { AssetAdvancedTools } from './tools/asset-advanced-tools';
 import { ValidationTools } from './tools/validation-tools';
 import { IEditorAdapter } from './adapters/editor-adapter';
+import {
+    isExpectedToolError,
+    expectedErrorToBody,
+    requiredArgMissing,
+    toolTimeout,
+} from './errors';
+import { ENGINE_MAJOR } from './engine-version';
 
 export class MCPServer {
     private settings: MCPServerSettings;
@@ -139,16 +146,100 @@ export class MCPServer {
         return this.toolsList.filter(tool => enabledToolNames.has(tool.name));
     }
 
+    /**
+     * Per-tool soft-timeout overrides (ms). Anything not in this map uses
+     * `DEFAULT_SOFT_TIMEOUT_MS`. Override keys are full wire names
+     * ({category}_{tool}).
+     */
+    private static readonly TOOL_SOFT_TIMEOUT_MS: Record<string, number> = {
+        scene_save_scene: 15_000,
+        scene_save_scene_as: 15_000,
+        scene_create_scene: 15_000,
+        scene_open_scene: 15_000,
+        scene_close_scene: 10_000,
+        project_build_project: 600_000,
+        project_run_project: 600_000,
+        project_open_build_panel: 60_000,
+        project_start_preview_server: 60_000,
+        project_stop_preview_server: 60_000,
+        preferences_open_preferences_settings: 30_000,
+        broadcast_listen_broadcast: 5_000,
+        debug_search_project_logs: 5_000,
+    };
+
+    private static readonly DEFAULT_SOFT_TIMEOUT_MS = 30_000;
+
+    /** Tools that are never expected to respond quickly; the sweep runner can skip them. */
+    private static readonly LONG_RUNNING_TOOLS = new Set<string>([
+        'project_run_project',
+        'project_build_project',
+        'project_open_build_panel',
+        'project_start_preview_server',
+        'project_stop_preview_server',
+        'preferences_open_preferences_settings',
+        'broadcast_listen_broadcast',
+    ]);
+
+    private softTimeoutFor(toolName: string): number {
+        return MCPServer.TOOL_SOFT_TIMEOUT_MS[toolName] ?? MCPServer.DEFAULT_SOFT_TIMEOUT_MS;
+    }
+
+    private findToolDef(category: string, toolMethodName: string): any {
+        const toolSet = this.tools[category];
+        if (!toolSet || typeof toolSet.getTools !== 'function') {
+            return undefined;
+        }
+        const tools = toolSet.getTools();
+        for (const t of tools) {
+            if (t.name === toolMethodName) {
+                return t;
+            }
+        }
+        return undefined;
+    }
+
+    private validateRequiredArgs(toolName: string, toolDef: any, args: any): void {
+        const required: string[] | undefined = toolDef?.inputSchema?.required;
+        if (!Array.isArray(required) || required.length === 0) {
+            return;
+        }
+        const params = args && typeof args === 'object' ? args : {};
+        for (const field of required) {
+            const v = (params as any)[field];
+            if (v === undefined || v === null || (typeof v === 'string' && v.length === 0)) {
+                throw requiredArgMissing(toolName, field);
+            }
+        }
+    }
+
     public async executeToolCall(toolName: string, args: any): Promise<any> {
         const parts = toolName.split('_');
         const category = parts[0];
         const toolMethodName = parts.slice(1).join('_');
-        
-        if (this.tools[category]) {
-            return await this.tools[category].execute(toolMethodName, args);
+
+        if (!this.tools[category]) {
+            throw new Error(`Tool ${toolName} not found`);
         }
-        
-        throw new Error(`Tool ${toolName} not found`);
+
+        // Pre-dispatch required-arg validation — short-circuits the usual IPC hang
+        // on `{}` calls (Task 6).
+        const toolDef = this.findToolDef(category, toolMethodName);
+        this.validateRequiredArgs(toolName, toolDef, args);
+
+        const softTimeoutMs = this.softTimeoutFor(toolName);
+        const dispatch: Promise<any> = this.tools[category].execute(toolMethodName, args);
+
+        let timer: any;
+        const timeout = new Promise<never>((_, reject) => {
+            timer = setTimeout(() => reject(toolTimeout(toolName, softTimeoutMs)), softTimeoutMs);
+        });
+        try {
+            return await Promise.race([dispatch, timeout]);
+        } finally {
+            if (timer) {
+                clearTimeout(timer);
+            }
+        }
     }
 
     public getClients(): MCPClient[] {
@@ -260,9 +351,19 @@ export class MCPServer {
                     break;
                 case 'tools/call':
                     const { name, arguments: args } = params;
-                    const toolResult = await this.executeToolCall(name, args);
-                    const text = JSON.stringify(toolResult ?? null) ?? 'null';
-                    result = { content: [{ type: 'text', text }] };
+                    try {
+                        const toolResult = await this.executeToolCall(name, args);
+                        const text = JSON.stringify(toolResult ?? null) ?? 'null';
+                        result = { content: [{ type: 'text', text }] };
+                    } catch (toolErr) {
+                        if (isExpectedToolError(toolErr)) {
+                            console.log(`[MCPServer] JSON-RPC expected tool error (${name}): ${(toolErr as Error).message}`);
+                            const body = expectedErrorToBody(toolErr, name);
+                            result = { content: [{ type: 'text', text: JSON.stringify(body) }] };
+                        } else {
+                            throw toolErr;
+                        }
+                    }
                     break;
                 case 'initialize':
                     // MCP initialization
@@ -381,7 +482,21 @@ export class MCPServer {
                 
                 // Execute tool
                 const result = await this.executeToolCall(fullToolName, params);
-                
+
+                // If the tool itself returned a ToolResponse with an explicit failure,
+                // surface that (HTTP 200, outer success=false) so clients do not have to
+                // peek two levels deep.
+                if (result && typeof result === 'object' && result.success === false) {
+                    res.writeHead(200);
+                    res.end(JSON.stringify({
+                        success: false,
+                        tool: fullToolName,
+                        error: result.error || 'tool_returned_failure',
+                        result,
+                    }));
+                    return;
+                }
+
                 res.writeHead(200);
                 res.end(JSON.stringify({
                     success: true,
@@ -390,31 +505,52 @@ export class MCPServer {
                 }));
                 
             } catch (error: any) {
-                console.error('Simple API error:', error);
-                res.writeHead(500);
-                res.end(JSON.stringify({
-                    success: false,
-                    error: error.message,
-                    tool: pathname
-                }));
+                const pathParts = pathname.split('/').filter(p => p);
+                const fullToolName =
+                    pathParts.length >= 3 ? `${pathParts[1]}_${pathParts[2]}` : pathname;
+                if (isExpectedToolError(error)) {
+                    console.log(`[MCPServer] Expected tool error (${fullToolName}): ${error.message}`);
+                    res.writeHead(200);
+                    res.end(JSON.stringify(expectedErrorToBody(error, fullToolName)));
+                } else {
+                    console.error('[MCPServer] Unexpected tool error:', error);
+                    res.writeHead(500);
+                    res.end(JSON.stringify({
+                        success: false,
+                        error: error.message,
+                        tool: fullToolName,
+                    }));
+                }
             }
         });
     }
 
     private getSimplifiedToolsList(): any[] {
+        const unsupportedOn2x = new Set(['sceneView', 'referenceImage']);
         return this.toolsList.map(tool => {
             const parts = tool.name.split('_');
             const category = parts[0];
             const toolName = parts.slice(1).join('_');
-            
-            return {
+
+            const entry: any = {
                 name: tool.name,
                 category: category,
                 toolName: toolName,
                 description: tool.description,
                 apiPath: `/api/${category}/${toolName}`,
-                curlExample: this.generateCurlExample(category, toolName, tool.inputSchema)
+                curlExample: this.generateCurlExample(category, toolName, tool.inputSchema),
             };
+            if (ENGINE_MAJOR === 2 && unsupportedOn2x.has(category)) {
+                entry.unsupportedOnEngine = 2;
+            }
+            if (MCPServer.LONG_RUNNING_TOOLS.has(tool.name)) {
+                entry.longRunning = true;
+            }
+            const softTimeout = MCPServer.TOOL_SOFT_TIMEOUT_MS[tool.name];
+            if (typeof softTimeout === 'number') {
+                entry.defaultSoftTimeoutMs = softTimeout;
+            }
+            return entry;
         });
     }
 

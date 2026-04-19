@@ -537,7 +537,7 @@ export class SceneTools implements ToolExecutor {
     }
 
     private async saveSceneAs(path: string): Promise<ToolResponse> {
-        return new Promise((resolve) => {
+        return new Promise((resolve, reject) => {
             // save-as-scene API ，
             this.adapter.sendRequest('scene', 'save-as-scene').then(() => {
                 resolve({
@@ -547,20 +547,28 @@ export class SceneTools implements ToolExecutor {
                         message: `Scene save-as dialog opened`
                     }
                 });
-            }).catch((err: Error) => {
+            }).catch((err: any) => {
+                if (err && err.code === 'ENGINE_UNSUPPORTED') {
+                    reject(err);
+                    return;
+                }
                 resolve({ success: false, error: err.message });
             });
         });
     }
 
     private async closeScene(): Promise<ToolResponse> {
-        return new Promise((resolve) => {
+        return new Promise((resolve, reject) => {
             this.adapter.sendRequest('scene', 'close-scene').then(() => {
                 resolve({
                     success: true,
                     message: 'Scene closed successfully'
                 });
-            }).catch((err: Error) => {
+            }).catch((err: any) => {
+                if (err && err.code === 'ENGINE_UNSUPPORTED') {
+                    reject(err);
+                    return;
+                }
                 resolve({ success: false, error: err.message });
             });
         });

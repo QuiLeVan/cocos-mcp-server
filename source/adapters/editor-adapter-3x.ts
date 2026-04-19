@@ -197,4 +197,24 @@ export class EditorAdapter3x implements IEditorAdapter {
     public throwUnsupported(feature: string): never {
         throw new EngineUnsupportedError(feature, this.engineMajor);
     }
+
+    public async getSceneRootUuid(): Promise<string | null> {
+        try {
+            const info: any = await this.sendRequest('scene', 'query-current-scene');
+            if (info && typeof info.uuid === 'string' && info.uuid.length > 0) {
+                return info.uuid;
+            }
+        } catch {
+            /* fall through */
+        }
+        try {
+            const tree: any = await this.sendRequest('scene', 'query-node-tree');
+            if (tree && typeof tree.uuid === 'string' && tree.uuid.length > 0) {
+                return tree.uuid;
+            }
+        } catch {
+            /* fall through */
+        }
+        return null;
+    }
 }
