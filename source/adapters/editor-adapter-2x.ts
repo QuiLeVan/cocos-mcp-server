@@ -445,6 +445,104 @@ export class EditorAdapter2x implements IEditorAdapter {
         return 'Current Scene';
     }
 
+    /**
+     * When the 2.x scene script sees an empty runtime hierarchy (common in the
+     * editor scene panel: `cc.director.getScene().children` is `[]` while the
+     * Hierarchy still shows Canvas), rebuild the tree from the serialized `.fire`
+     * on disk. This matches saved assets and uses the same `_id` values the
+     * editor uses for node UUIDs.
+     */
+    private buildMcpNodeBranchFromFireObjects(arr: any[], objId: number): any | null {
+        const obj = arr[objId];
+        if (!obj || typeof obj !== 'object') {
+            return null;
+        }
+        const uuid = typeof obj._id === 'string' && obj._id.length > 0 ? obj._id : '';
+        const name = typeof obj._name === 'string' ? obj._name : '';
+        const active = obj._active !== false;
+        const childRefs = Array.isArray(obj._children) ? obj._children : [];
+        const children: any[] = [];
+        for (const r of childRefs) {
+            const cid = r && typeof r.__id__ === 'number' ? r.__id__ : -1;
+            if (cid < 0) {
+                continue;
+            }
+            const c = this.buildMcpNodeBranchFromFireObjects(arr, cid);
+            if (c) {
+                children.push(c);
+            }
+        }
+        const isScene = obj.__type__ === 'cc.Scene';
+        return {
+            uuid,
+            name,
+            active,
+            type: isScene ? 'cc.Scene' : 'cc.Node',
+            children,
+        };
+    }
+
+    private async tryLoadSceneChildrenFromSerializedFire(sceneAssetUuid: string): Promise<any[] | null> {
+        if (!sceneAssetUuid) {
+            return null;
+        }
+        let fsPath = '';
+        try {
+            fsPath = await this.callAssetDb('queryPathByUuid', sceneAssetUuid);
+        } catch {
+            return null;
+        }
+        if (typeof fsPath !== 'string' || !fsPath || !fs.existsSync(fsPath)) {
+            return null;
+        }
+        const ext = path.extname(fsPath).toLowerCase();
+        if (ext !== '.fire' && ext !== '.scene') {
+            return null;
+        }
+        let raw: string;
+        try {
+            raw = fs.readFileSync(fsPath, 'utf8');
+        } catch {
+            return null;
+        }
+        let arr: unknown;
+        try {
+            arr = JSON.parse(raw);
+        } catch {
+            return null;
+        }
+        if (!Array.isArray(arr)) {
+            return null;
+        }
+        let sceneIdx = -1;
+        for (let i = 0; i < arr.length; i++) {
+            if (arr[i] && (arr[i] as any).__type__ === 'cc.Scene') {
+                sceneIdx = i;
+                break;
+            }
+        }
+        if (sceneIdx < 0) {
+            return null;
+        }
+        const scene = arr[sceneIdx] as any;
+        const refs = scene._children;
+        if (!Array.isArray(refs) || refs.length === 0) {
+            return null;
+        }
+        const out: any[] = [];
+        for (const r of refs) {
+            const id = r && typeof r.__id__ === 'number' ? r.__id__ : -1;
+            if (id < 0) {
+                continue;
+            }
+            const branch = this.buildMcpNodeBranchFromFireObjects(arr as any[], id);
+            if (branch) {
+                out.push(branch);
+            }
+        }
+        return out.length > 0 ? out : null;
+    }
+
     private async buildSceneTreeRoot(opts?: { includeComponents?: boolean }): Promise<any> {
         let info: any = null;
         let children: any[] = [];
@@ -463,6 +561,18 @@ export class EditorAdapter2x implements IEditorAdapter {
         let uuid = typeof info?.uuid === 'string' && info.uuid.length > 0 ? info.uuid : '';
         if (!uuid) {
             uuid = this.readCurrentSceneAssetUuidFromMain();
+        }
+        if (children.length === 0) {
+            let disk: any[] | null = uuid ? await this.tryLoadSceneChildrenFromSerializedFire(uuid) : null;
+            if (!disk || disk.length === 0) {
+                const mainUuid = this.readCurrentSceneAssetUuidFromMain();
+                if (mainUuid) {
+                    disk = await this.tryLoadSceneChildrenFromSerializedFire(mainUuid);
+                }
+            }
+            if (disk && disk.length > 0) {
+                children = disk;
+            }
         }
         const name = await this.resolveSceneDisplayName(info?.name, uuid);
         return {

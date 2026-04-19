@@ -41,7 +41,7 @@ function invalidateIndex(): void {
 
 function walk(node: any, visit: (n: any) => void): void {
     visit(node);
-    const children: any[] = node.children || [];
+    const children: any[] = nodeDirectChildrenList(node);
     for (let i = 0; i < children.length; i++) {
         walk(children[i], visit);
     }
@@ -78,13 +78,90 @@ function getActiveScene(): any | null {
     if (!d) {
         return null;
     }
-    const s = typeof d.getScene === 'function' ? d.getScene() : null;
-    if (s) {
-        return s;
+    const candidates: any[] = [];
+    const add = (s: any) => {
+        if (s && typeof s === 'object' && candidates.indexOf(s) < 0) {
+            candidates.push(s);
+        }
+    };
+    add(typeof d.getScene === 'function' ? d.getScene() : null);
+    add(d._scene);
+    const game: any = (engine as any).game;
+    if (game) {
+        add(game._scene);
     }
-    // Editor / paused states: some 2.x builds keep the loaded scene on `_scene`.
-    const alt = d._scene;
-    return alt || null;
+    const score = (s: any) => nodeDirectChildrenList(s).length;
+    let best: any = null;
+    let bestScore = -1;
+    for (const s of candidates) {
+        const sc = score(s);
+        if (sc > bestScore) {
+            bestScore = sc;
+            best = s;
+        }
+    }
+    if (best && bestScore > 0) {
+        return best;
+    }
+    try {
+        const finder = engine.find;
+        if (typeof finder === 'function') {
+            const canvas = finder.call(engine, 'Canvas');
+            if (canvas) {
+                let top: any = canvas;
+                while (top && top.parent) {
+                    top = top.parent;
+                }
+                if (top) {
+                    return top;
+                }
+            }
+        }
+    } catch {
+        /* ignore */
+    }
+    const primary = typeof d.getScene === 'function' ? d.getScene() : null;
+    return primary || d._scene || null;
+}
+
+/**
+ * Best-effort direct child list for a node. In Creator 2.4.x **editor** scene
+ * scripts, `node.children` is occasionally still `[]` while the hierarchy panel
+ * shows content; the engine keeps the real list on the internal `_children`
+ * array (see engine `cc.Node` implementation). We mirror that so tree tools and
+ * UUID indexing see the same nodes as the editor.
+ *
+ * Filters out `PrivateNode` instances (RichText/TileMap internals) so MCP
+ * hierarchy matches user-visible nodes.
+ */
+function nodeDirectChildrenList(node: any): any[] {
+    if (!node) {
+        return [];
+    }
+    const pub: any[] = node.children;
+    if (Array.isArray(pub) && pub.length > 0) {
+        return pub;
+    }
+    const internal = node._children as any[] | undefined;
+    if (Array.isArray(internal) && internal.length > 0) {
+        const out: any[] = [];
+        for (let i = 0; i < internal.length; i++) {
+            const c = internal[i];
+            if (!c || typeof c !== 'object') {
+                continue;
+            }
+            const ctor = c.constructor;
+            const ctorName = ctor && ctor.name ? String(ctor.name) : '';
+            if (ctorName === 'PrivateNode') {
+                continue;
+            }
+            out.push(c);
+        }
+        if (out.length > 0) {
+            return out;
+        }
+    }
+    return Array.isArray(pub) ? pub : [];
 }
 
 /**
@@ -101,16 +178,30 @@ function runtimeSceneTopLevelNodes(scene: any): any[] {
     if (!scene) {
         return [];
     }
-    const roots: any[] = scene.children || [];
+    const roots: any[] = nodeDirectChildrenList(scene);
     if (roots.length > 0) {
         return roots;
     }
     try {
-        const finder = engine.find;
-        if (typeof finder === 'function') {
-            const canvas = finder.call(engine, 'Canvas');
+        if (typeof scene.getChildByName === 'function') {
+            const canvas = scene.getChildByName('Canvas');
             if (canvas) {
                 return [canvas];
+            }
+        }
+    } catch {
+        /* ignore */
+    }
+    try {
+        const finder = engine.find;
+        if (typeof finder === 'function') {
+            const canvas = finder.call(engine, 'Canvas', scene);
+            if (canvas) {
+                return [canvas];
+            }
+            const canvas2 = finder.call(engine, 'Canvas');
+            if (canvas2) {
+                return [canvas2];
             }
         }
     } catch {
@@ -314,7 +405,7 @@ function collectNodeTree(node: any, includeComponents: boolean): any {
             enabled: !!c.enabled,
         }));
     }
-    const children: any[] = node.children || [];
+    const children: any[] = nodeDirectChildrenList(node);
     for (let i = 0; i < children.length; i++) {
         entry.children.push(collectNodeTree(children[i], includeComponents));
     }
@@ -996,7 +1087,7 @@ const methods: Record<string, (...args: any[]) => any> = {
                         type: c && c.constructor ? c.constructor.name : 'Unknown',
                         properties: getComponentPropertiesPayload(c),
                     })),
-                    children: (n.children || []).map(serializeNode),
+                    children: nodeDirectChildrenList(n).map(serializeNode),
                 };
             };
             return { success: true, data: serializeNode(scene) };
